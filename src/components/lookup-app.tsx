@@ -1,7 +1,18 @@
 "use client";
 
 import { createContext, useContext, useMemo, useState } from "react";
-import { CheckCircle2, Factory, Search } from "lucide-react";
+import { CheckCircle2, Copy, Factory, Search } from "lucide-react";
+import {
+  DATE_RANGE_OPTIONS,
+  filterRecords,
+  lastMount,
+  lastMountIsUp,
+  machineEdgesFromRecords,
+  machineListText,
+  rangeStart,
+  similarMoldIds,
+  type DateRange,
+} from "@/lib/lookup";
 import {
   machineMatches,
   moldMatches,
@@ -38,6 +49,54 @@ function useDataset() {
   const value = useContext(DatasetContext);
   if (!value) throw new Error("dataset missing");
   return value;
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        } catch {
+          setCopied(false);
+        }
+      }}
+    >
+      <Copy className="size-3.5" />
+      {copied ? "已复制" : label}
+    </Button>
+  );
+}
+
+function DateRangeBar({
+  value,
+  onChange,
+}: {
+  value: DateRange;
+  onChange: (value: DateRange) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {DATE_RANGE_OPTIONS.map((opt) => (
+        <Button
+          key={opt.id}
+          type="button"
+          size="sm"
+          variant={value === opt.id ? "default" : "outline"}
+          onClick={() => onChange(opt.id)}
+        >
+          {opt.label}
+        </Button>
+      ))}
+    </div>
+  );
 }
 
 function SourceBadge({ value }: { value: MachineSource }) {
@@ -180,6 +239,9 @@ function MachineEdgeList({
   edges: MachineEdge[];
   onPick: (id: string) => void;
 }) {
+  if (!edges.length) {
+    return <p className="text-sm text-muted-foreground">当前时间范围内没有机台记录。</p>;
+  }
   return (
     <div className="grid gap-2">
       {edges.map((edge) => (
@@ -205,7 +267,12 @@ function MachineEdgeList({
             ) : null}
           </div>
           <div className="text-xs text-muted-foreground sm:text-right">
-            {edge.dates.map((d) => d.slice(5)).join("、")}
+            {edge.dates.length
+              ? `最近 ${edge.dates[edge.dates.length - 1].slice(5)}`
+              : ""}
+            {edge.dates.length > 1 ? (
+              <div>{edge.dates.map((d) => d.slice(5)).join("、")}</div>
+            ) : null}
           </div>
         </div>
       ))}
@@ -215,41 +282,70 @@ function MachineEdgeList({
 
 function MoldDetail({
   mold,
+  rows,
   onPickMachine,
   onPickMold,
 }: {
   mold: MoldIndex;
+  rows: RecordRow[];
   onPickMachine: (id: string) => void;
   onPickMold: (id: string) => void;
 }) {
-  const dataset = useDataset();
-  const rows = recordsForMold(dataset, mold.canonical);
+  const edges = machineEdgesFromRecords(rows);
+  const latest = lastMount(rows);
+  const machineText = machineListText(edges);
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-mono text-2xl font-semibold tracking-tight">
-          {mold.canonical}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          纳入的表里实际出现过的机台：
-          {mold.machines.map((m) => m.machine).join("、") || "无"}
-        </p>
-        {mold.rawForms.length > 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">
-            表里的写法：{mold.rawForms.join("、")}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="font-mono text-2xl font-semibold tracking-tight">
+            {mold.canonical}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            纳入的表里实际出现过的机台：
+            {machineText || "无"}
           </p>
-        ) : null}
-        {mold.corrections.length > 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">
-            已按确认改号：{mold.corrections.join("；")}
-          </p>
-        ) : null}
+          {mold.rawForms.length > 0 ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              表里的写法：{mold.rawForms.join("、")}
+            </p>
+          ) : null}
+          {mold.corrections.length > 0 ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              已按确认改号：{mold.corrections.join("；")}
+            </p>
+          ) : null}
+        </div>
+        <CopyButton text={machineText} label="复制机台号" />
       </div>
 
+      {latest ? (
+        <div className="rounded-xl border bg-muted/40 p-4">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">
+            {lastMountIsUp(latest) ? "最近一次上机" : "最近一次记录（表上未勾选上机）"}
+          </p>
+          <p className="mt-1 text-lg font-medium">
+            <span className="font-mono">{latest.machine}</span>
+            <span className="text-muted-foreground"> · {latest.date}</span>
+            <span className="text-muted-foreground"> · {latest.shift}</span>
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {latest.sourceFile}
+            {latest.mold.variant ? ` · ${latest.mold.variant}` : ""}
+            {latest.product ? ` · ${latest.product}` : ""}
+            。这是表里的事实，不能据此认定此刻一定还在这台机上。
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          当前时间范围内没有这条模具的转模记录。可改选「全部」。
+        </p>
+      )}
+
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">关联机台</h3>
-        <MachineEdgeList edges={mold.machines} onPick={onPickMachine} />
+        <h3 className="text-sm font-medium">关联机台（按最近日期）</h3>
+        <MachineEdgeList edges={edges} onPick={onPickMachine} />
       </div>
 
       <div className="space-y-2">
@@ -271,20 +367,54 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
   const [machineQuery, setMachineQuery] = useState("");
   const [selectedMold, setSelectedMold] = useState<string | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<DateRange>("all");
+
+  const start = rangeStart(dateRange);
+  const rangedRecords = useMemo(
+    () => filterRecords(dataset.records, start),
+    [dataset.records, start]
+  );
 
   const moldResults = useMemo(() => {
     return dataset.molds
       .filter((m) => moldMatches(m, moldQuery))
-      .sort(
-        (a, b) =>
+      .filter((m) =>
+        dateRange === "all"
+          ? true
+          : rangedRecords.some((r) => r.mold.ids.includes(m.canonical))
+      )
+      .sort((a, b) => {
+        const ra = lastMount(
+          rangedRecords.filter((r) => r.mold.ids.includes(a.canonical))
+        );
+        const rb = lastMount(
+          rangedRecords.filter((r) => r.mold.ids.includes(b.canonical))
+        );
+        const da = ra?.date ?? "";
+        const db = rb?.date ?? "";
+        if (da !== db) return db.localeCompare(da);
+        return (
           b.machines.length - a.machines.length ||
           a.canonical.localeCompare(b.canonical)
-      );
-  }, [dataset, moldQuery]);
+        );
+      });
+  }, [dataset, moldQuery, dateRange, rangedRecords]);
 
   const machineResults = useMemo(() => {
-    return dataset.machines.filter((m) => machineMatches(m, machineQuery));
-  }, [dataset, machineQuery]);
+    return dataset.machines
+      .filter((m) => machineMatches(m, machineQuery))
+      .filter((m) =>
+        dateRange === "all" ? true : rangedRecords.some((r) => r.machine === m.id)
+      )
+      .sort((a, b) => {
+        const ra = lastMount(rangedRecords.filter((r) => r.machine === a.id));
+        const rb = lastMount(rangedRecords.filter((r) => r.machine === b.id));
+        const da = ra?.date ?? "";
+        const db = rb?.date ?? "";
+        if (da !== db) return db.localeCompare(da);
+        return b.molds.length - a.molds.length;
+      });
+  }, [dataset, machineQuery, dateRange, rangedRecords]);
 
   const activeMold =
     dataset.molds.find((m) => m.canonical === selectedMold) ??
@@ -293,6 +423,18 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
   const activeMachine =
     dataset.machines.find((m) => m.id === selectedMachine) ??
     (machineQuery ? machineResults[0] : undefined);
+
+  const activeMoldRows = activeMold
+    ? filterRecords(recordsForMold(dataset, activeMold.canonical), start)
+    : [];
+  const similar =
+    moldQuery && moldResults.length === 0
+      ? similarMoldIds(moldQuery, dataset.molds)
+      : [];
+  const existsOutsideRange =
+    Boolean(moldQuery) &&
+    moldResults.length === 0 &&
+    dataset.molds.some((m) => moldMatches(m, moldQuery));
 
   function pickMold(id: string) {
     setSelectedMold(id);
@@ -306,7 +448,7 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
     setTab("machine");
   }
 
-  const multi = dataset.molds.filter((m) => m.machines.length > 1);
+  const multi = moldResults.filter((m) => m.machines.length > 1);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
@@ -353,17 +495,24 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
         </TabsList>
 
         <TabsContent value="mold" className="space-y-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-            <Input
-              value={moldQuery}
-              onChange={(e) => {
-                setMoldQuery(e.target.value);
-                setSelectedMold(null);
-              }}
-              placeholder="输入模具号，例如 S240122、S250137、ZDX3464"
-              className="h-10 pl-8 text-base"
-            />
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={moldQuery}
+                onChange={(e) => {
+                  setMoldQuery(e.target.value);
+                  setSelectedMold(null);
+                }}
+                placeholder="输入模具号，例如 S240122、S250137、ZDX3464"
+                className="h-12 pl-10 text-lg sm:h-11"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="search"
+              />
+            </div>
+            <DateRangeBar value={dateRange} onChange={setDateRange} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
@@ -377,26 +526,37 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
                 </CardDescription>
               </CardHeader>
               <CardContent className="max-h-[70vh] space-y-1 overflow-auto">
-                {(moldQuery ? moldResults : multi).map((mold) => (
-                  <button
-                    key={mold.canonical}
-                    type="button"
-                    onClick={() => pickMold(mold.canonical)}
-                    className={cn(
-                      "w-full rounded-lg px-2 py-2 text-left hover:bg-muted",
-                      activeMold?.canonical === mold.canonical && "bg-muted"
-                    )}
-                  >
-                    <div className="font-mono font-medium">{mold.canonical}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {mold.machines.map((m) => m.machine).join("、")}
-                    </div>
-                  </button>
-                ))}
+                {(moldQuery ? moldResults : multi).map((mold) => {
+                  const latest = lastMount(
+                    rangedRecords.filter((r) => r.mold.ids.includes(mold.canonical))
+                  );
+                  return (
+                    <button
+                      key={mold.canonical}
+                      type="button"
+                      onClick={() => pickMold(mold.canonical)}
+                      className={cn(
+                        "w-full rounded-lg px-2 py-2 text-left hover:bg-muted",
+                        activeMold?.canonical === mold.canonical && "bg-muted"
+                      )}
+                    >
+                      <div className="font-mono font-medium">{mold.canonical}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {latest
+                          ? `${latest.machine} · ${latest.date.slice(5)}`
+                          : mold.machines.map((m) => m.machine).join("、")}
+                      </div>
+                    </button>
+                  );
+                })}
                 {(moldQuery ? moldResults : multi).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    没有匹配的模具。可去掉前模/后模或空格再试。
-                  </p>
+                  <MoldEmpty
+                    hasQuery={Boolean(moldQuery)}
+                    existsOutsideRange={existsOutsideRange}
+                    similar={similar}
+                    onPick={pickMold}
+                    onShowAll={() => setDateRange("all")}
+                  />
                 ) : null}
               </CardContent>
             </Card>
@@ -406,6 +566,7 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
                 {activeMold ? (
                   <MoldDetail
                     mold={activeMold}
+                    rows={activeMoldRows}
                     onPickMachine={pickMachine}
                     onPickMold={pickMold}
                   />
@@ -418,17 +579,24 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
         </TabsContent>
 
         <TabsContent value="machine" className="space-y-4">
-          <div className="relative">
-            <Factory className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
-            <Input
-              value={machineQuery}
-              onChange={(e) => {
-                setMachineQuery(e.target.value);
-                setSelectedMachine(null);
-              }}
-              placeholder="输入机台号，例如 D19、A10、C05"
-              className="h-10 pl-8 text-base"
-            />
+          <div className="space-y-3">
+            <div className="relative">
+              <Factory className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={machineQuery}
+                onChange={(e) => {
+                  setMachineQuery(e.target.value);
+                  setSelectedMachine(null);
+                }}
+                placeholder="输入机台号，例如 D19、A10、C05"
+                className="h-12 pl-10 text-lg sm:h-11"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="search"
+              />
+            </div>
+            <DateRangeBar value={dateRange} onChange={setDateRange} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
@@ -454,6 +622,15 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
                     </div>
                   </button>
                 ))}
+                {machineResults.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {machineQuery
+                      ? dateRange === "all"
+                        ? "纳入的表里没有这个机台号。"
+                        : "当前时间范围内没有这台机。可改选「全部」。"
+                      : "当前筛选下没有机台。"}
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -463,12 +640,16 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
                   <MachineDetail
                     machineId={activeMachine.id}
                     molds={activeMachine.molds}
+                    rows={filterRecords(
+                      recordsForMachine(dataset, activeMachine.id),
+                      start
+                    )}
                     onPickMold={pickMold}
                     onPickMachine={pickMachine}
                   />
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    选择左侧机台，查看这 14 天里和它对上过的模具号。
+                    选择左侧机台，查看纳入的表里和它对上过的模具号。
                   </p>
                 )}
               </CardContent>
@@ -530,26 +711,40 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
 function MachineDetail({
   machineId,
   molds,
+  rows,
   onPickMold,
   onPickMachine,
 }: {
   machineId: string;
   molds: string[];
+  rows: RecordRow[];
   onPickMold: (id: string) => void;
   onPickMachine: (id: string) => void;
 }) {
-  const dataset = useDataset();
-  const rows = recordsForMachine(dataset, machineId);
+  const moldIds = [
+    ...new Set(rows.flatMap((r) => r.mold.ids).filter(Boolean)),
+  ];
+  const shownMolds = moldIds.length ? moldIds : molds;
+  const latest = lastMount(rows);
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-mono text-2xl font-semibold">{machineId}</h2>
-        <p className="text-sm text-muted-foreground">
-          纳入的表里对上过 {molds.length} 个模具号
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="font-mono text-2xl font-semibold">{machineId}</h2>
+          <p className="text-sm text-muted-foreground">
+            当前范围内对上过 {shownMolds.length} 个模具号
+          </p>
+          {latest ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              最近记录 {latest.date} {latest.shift} ·{" "}
+              {latest.mold.ids.join("/") || "缺号"}
+            </p>
+          ) : null}
+        </div>
+        <CopyButton text={shownMolds.join("、")} label="复制模具号" />
       </div>
       <div className="flex flex-wrap gap-2">
-        {molds.map((id) => (
+        {shownMolds.map((id) => (
           <Button
             key={id}
             variant="secondary"
@@ -575,6 +770,57 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border bg-card px-3 py-3">
       <div className="text-2xl font-semibold tracking-tight">{value}</div>
       <div className="text-xs text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+function MoldEmpty({
+  hasQuery,
+  existsOutsideRange,
+  similar,
+  onPick,
+  onShowAll,
+}: {
+  hasQuery: boolean;
+  existsOutsideRange: boolean;
+  similar: string[];
+  onPick: (id: string) => void;
+  onShowAll: () => void;
+}) {
+  if (!hasQuery) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        当前筛选下没有模具上过两台及以上。可改选「全部」，或直接输入模具号。
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2 text-sm text-muted-foreground">
+      <p>
+        {existsOutsideRange
+          ? "这个编号在表里有，但不在当前时间范围内。"
+          : "纳入的表里没有这个编号。可能还没导入那个月，或写法不同（不要把 S25004 和 S250004 当成同一个）。"}
+      </p>
+      {existsOutsideRange ? (
+        <button type="button" className="underline" onClick={onShowAll}>
+          改为查看全部日期
+        </button>
+      ) : null}
+      {similar.length ? (
+        <p>
+          相近编号：
+          {similar.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className="mr-2 font-mono underline-offset-4 hover:underline"
+              onClick={() => onPick(id)}
+            >
+              {id}
+            </button>
+          ))}
+        </p>
+      ) : null}
     </div>
   );
 }

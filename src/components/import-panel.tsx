@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { FileUp, Trash2 } from "lucide-react";
+import type { ImportPreview } from "@/lib/import-preview";
+import { datasetDiff } from "@/lib/lookup";
 import type { Dataset } from "@/lib/types";
 import {
   storageHeadline,
@@ -26,6 +28,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+type ImportDiff = ReturnType<typeof datasetDiff>;
+
 export function ImportPanel({
   dataset,
   onDataset,
@@ -40,6 +44,9 @@ export function ImportPanel({
   const [storage, setStorage] = useState<StorageInfo | null>(
     dataset.meta.storage ?? null
   );
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [diff, setDiff] = useState<ImportDiff | null>(null);
 
   useEffect(() => {
     fetch("/api/storage")
@@ -50,32 +57,67 @@ export function ImportPanel({
 
   const writeProtected = storage?.writeProtected ?? dataset.meta.storage?.writeProtected;
 
-  async function upload(file: File) {
+  async function postFile(file: File, previewOnly: boolean) {
+    const body = new FormData();
+    body.set("file", file);
+    if (importKey) body.set("importKey", importKey);
+    if (previewOnly) body.set("preview", "1");
+    const res = await fetch("/api/import", { method: "POST", body });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || (previewOnly ? "无法预览" : "导入失败"));
+    }
+    return json;
+  }
+
+  async function loadPreview(file: File) {
     setBusy(true);
     setError(null);
     setMessage(null);
+    setDiff(null);
     try {
-      const body = new FormData();
-      body.set("file", file);
-      if (importKey) body.set("importKey", importKey);
-      const res = await fetch("/api/import", { method: "POST", body });
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json.error || "导入失败");
-        return;
-      }
-      onDataset(json.dataset);
-      if (json.dataset?.meta?.storage) setStorage(json.dataset.meta.storage);
-      const warnings = (json.warnings as string[] | undefined)?.filter(Boolean) ?? [];
-      setMessage(
-        `已纳入「${file.name}」。当前共 ${json.dataset.meta.sourceFiles.length} 份表、${json.dataset.meta.recordCount} 条记录。` +
-          (warnings.length ? ` ${warnings.join(" ")}` : "")
-      );
-    } catch {
-      setError("导入时网络中断，请再试一次。");
+      const json = await postFile(file, true);
+      setPendingFile(file);
+      setPreview(json.preview as ImportPreview);
+    } catch (err) {
+      setPendingFile(null);
+      setPreview(null);
+      setError(err instanceof Error ? err.message : "无法预览这张表。");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function confirmImport() {
+    if (!pendingFile) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    const before = dataset;
+    try {
+      const json = await postFile(pendingFile, false);
+      onDataset(json.dataset);
+      if (json.dataset?.meta?.storage) setStorage(json.dataset.meta.storage);
+      const nextDiff = datasetDiff(before, json.dataset);
+      setDiff(nextDiff);
+      const warnings = (json.warnings as string[] | undefined)?.filter(Boolean) ?? [];
+      setMessage(
+        `已纳入「${pendingFile.name}」。当前共 ${json.dataset.meta.sourceFiles.length} 份表、${json.dataset.meta.recordCount} 条记录。` +
+          (warnings.length ? ` ${warnings.join(" ")}` : "")
+      );
+      setPendingFile(null);
+      setPreview(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导入时网络中断，请再试一次。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelPreview() {
+    setPendingFile(null);
+    setPreview(null);
+    setError(null);
   }
 
   async function remove(filename: string) {
@@ -89,6 +131,7 @@ export function ImportPanel({
     setBusy(true);
     setError(null);
     setMessage(null);
+    setDiff(null);
     try {
       const res = await fetch(
         `/api/sources?filename=${encodeURIComponent(filename)}`,
@@ -115,9 +158,7 @@ export function ImportPanel({
   return (
     <div className="space-y-4">
       <Alert>
-        <AlertTitle>
-          {storageHeadline(storage?.mode)}
-        </AlertTitle>
+        <AlertTitle>{storageHeadline(storage?.mode)}</AlertTitle>
         <AlertDescription>
           {storage?.label ||
             "未配置云数据库时，导入只写到这台电脑；关电脑或删表格后，查询会变。"}
@@ -128,7 +169,7 @@ export function ImportPanel({
         <CardHeader>
           <CardTitle>继续往上加月份</CardTitle>
           <CardDescription>
-            十月、十一月把新表导进来即可。同一模具号会把各月机台合在一起。同名文件再导一次只替换该文件。
+            先预览再写入。同名文件会替换该月，不会把同一月加两遍。十月、十一月用不同文件名即可累加。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -161,14 +202,27 @@ export function ImportPanel({
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
-                if (file) void upload(file);
+                if (file) void loadPreview(file);
               }}
             />
           </label>
+
+          {preview ? (
+            <PreviewCard
+              preview={preview}
+              busy={busy}
+              onConfirm={() => void confirmImport()}
+              onCancel={cancelPreview}
+            />
+          ) : null}
+
           {message ? (
             <Alert>
               <AlertTitle>导入完成</AlertTitle>
-              <AlertDescription>{message}</AlertDescription>
+              <AlertDescription>
+                <p>{message}</p>
+                {diff ? <DiffLines diff={diff} /> : null}
+              </AlertDescription>
             </Alert>
           ) : null}
           {error ? (
@@ -234,4 +288,121 @@ export function ImportPanel({
       </Card>
     </div>
   );
+}
+
+function PreviewCard({
+  preview,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  preview: ImportPreview;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-xl border bg-muted/30 p-4">
+      <div>
+        <p className="font-medium">预览「{preview.filename}」</p>
+        <p className="text-sm text-muted-foreground">
+          {preview.replacing
+            ? `将替换已有的同名文件（现在 ${preview.existing?.recordCount ?? 0} 条，日期 ${formatSpan(preview.existing?.dateMin, preview.existing?.dateMax)}）。`
+            : "这是一份新文件，会累加进现有汇总。"}
+        </p>
+      </div>
+      <ul className="grid gap-1 text-sm sm:grid-cols-2">
+        <li>识别到 {preview.dayCount} 天，{preview.recordCount} 条记录</li>
+        <li>
+          日期 {formatSpan(preview.dateMin, preview.dateMax)}
+        </li>
+        <li>工作表 {preview.sheets.length} 张</li>
+        <li>新模具 {preview.newMolds.length} 个，新机台 {preview.newMachines.length} 台</li>
+      </ul>
+      {preview.sheets.length ? (
+        <p className="text-xs text-muted-foreground">
+          表：{preview.sheets.slice(0, 12).join("、")}
+          {preview.sheets.length > 12 ? ` 等 ${preview.sheets.length} 张` : ""}
+        </p>
+      ) : null}
+      <IdList label="新出现的模具" ids={preview.newMolds} />
+      <IdList label="新出现的机台" ids={preview.newMachines} />
+      {preview.droppedMolds.length ? (
+        <IdList
+          label="替换后将从汇总里消失的模具（只出现在旧的同名文件里）"
+          ids={preview.droppedMolds}
+        />
+      ) : null}
+      {preview.missingMoldCount ? (
+        <p className="text-sm text-amber-800">
+          有 {preview.missingMoldCount} 行缺模具编号（未补上确认过的缺号规则）。
+        </p>
+      ) : null}
+      {preview.warnings.length ? (
+        <div className="space-y-1 text-sm text-amber-800">
+          <p className="font-medium">解析警告</p>
+          <ul className="list-disc pl-5">
+            {preview.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={onConfirm} disabled={busy}>
+          {busy ? "正在写入…" : "确认导入"}
+        </Button>
+        <Button variant="outline" onClick={onCancel} disabled={busy}>
+          取消
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function DiffLines({ diff }: { diff: ImportDiff }) {
+  const bits = [
+    diff.recordDelta === 0
+      ? "记录条数不变"
+      : `记录 ${diff.recordDelta > 0 ? "+" : ""}${diff.recordDelta} 条`,
+    diff.addedMolds.length ? `新模具 ${diff.addedMolds.length} 个` : null,
+    diff.removedMolds.length ? `减少模具 ${diff.removedMolds.length} 个` : null,
+    diff.addedMachines.length ? `新机台 ${diff.addedMachines.length} 台` : null,
+    diff.removedMachines.length ? `减少机台 ${diff.removedMachines.length} 台` : null,
+  ].filter(Boolean);
+  return (
+    <div className="mt-2 space-y-1 text-sm">
+      <p>{bits.join(" · ")}</p>
+      {diff.addedMolds.length ? (
+        <p>新模具：{previewIds(diff.addedMolds)}</p>
+      ) : null}
+      {diff.addedMachines.length ? (
+        <p>新机台：{previewIds(diff.addedMachines)}</p>
+      ) : null}
+      {diff.removedMolds.length ? (
+        <p>减少模具：{previewIds(diff.removedMolds)}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function IdList({ label, ids }: { label: string; ids: string[] }) {
+  if (!ids.length) return null;
+  return (
+    <p className="text-sm">
+      <span className="text-muted-foreground">{label}：</span>
+      {previewIds(ids)}
+    </p>
+  );
+}
+
+function previewIds(ids: string[]) {
+  const shown = ids.slice(0, 16).join("、");
+  return ids.length > 16 ? `${shown} 等 ${ids.length} 个` : shown;
+}
+
+function formatSpan(min?: string | null, max?: string | null) {
+  if (!min && !max) return "—";
+  if (min && max && min !== max) return `${min} ~ ${max}`;
+  return min || max || "—";
 }
