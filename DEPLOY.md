@@ -102,13 +102,18 @@ docker compose up -d --build
 2. 用 **GitHub** 登录（第一次会跳到 GitHub 授权，点允许）。
 3. 如果问组织名 / 个人空间，用默认即可。
 
-### 2.2 新建数据库
+### 2.2 新建数据库（对照 Create Database 弹窗）
 
-1. 进仪表盘后点 **Create Database** / **New Database** / **创建数据库**（按钮文案可能略有不同）。
-2. 数据库名字填：`mold-machine`（只能小写、数字、短横线）。
-3. 引擎选 **libSQL**。不要选带 `--tursodb` / TursoDB 那种新引擎；本项目用的是 libSQL 连接。
-4. 地区选离你最近的即可（例如 `singapore` / `tokyo`）。
-5. 创建。等状态变成 Ready / 可用。
+上面两个页签保持 **New Database**（不要点 Upload SQLite File）。
+
+| 栏 | 怎么填 |
+| --- | --- |
+| **Name** | `mold-machine`（只能小写、数字、短横线，不要空格） |
+| **Location** | 点下拉，选离中国近的，优先 **Singapore** / **Tokyo** / **Hong Kong**。没有这些就选列表里带 Asia 的。 |
+| 灰色开关 **Run this database on TursoDB…** | **保持关闭（靠左、灰色）**。不要打开。本项目要的是默认 libSQL，不是 TursoDB。 |
+
+然后点右下角黑色按钮 **Create Database**。等列表里出现 `mold-machine`，状态变成 Ready / 可用。
+
 
 ### 2.3 复制 URL
 
