@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Parse 转模记录9月份.xlsx into mold ↔ machine associations.
+"""Superseded by src/lib (TypeScript) and `npm run data`.
+
+Kept only as a reference for the original September parse.
+New monthly files should be added as data/*.xlsx and rebuilt with npm run data.
+"""
 
 Rules confirmed by the user (2026-09-15):
 - 上/下 = mount / unmount. Checkmarks are optional.

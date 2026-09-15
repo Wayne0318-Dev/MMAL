@@ -1,15 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { CheckCircle2, Factory, Search } from "lucide-react";
-import { dataset } from "@/lib/dataset";
 import {
   machineMatches,
   moldMatches,
   recordsForMachine,
   recordsForMold,
 } from "@/lib/search";
-import type { MachineEdge, MachineSource, MoldIndex, RecordRow } from "@/lib/types";
+import type { Dataset, MachineEdge, MachineSource, MoldIndex, RecordRow } from "@/lib/types";
+import { ImportPanel } from "@/components/import-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +31,14 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+
+const DatasetContext = createContext<Dataset | null>(null);
+
+function useDataset() {
+  const value = useContext(DatasetContext);
+  if (!value) throw new Error("dataset missing");
+  return value;
+}
 
 function SourceBadge({ value }: { value: MachineSource }) {
   if (value === "inherited") {
@@ -117,6 +125,11 @@ function RecordTable({
             <TableCell>
               <div className="whitespace-nowrap">{row.date.slice(5)}</div>
               <div className="text-muted-foreground">{row.shift}</div>
+              {row.sourceFile ? (
+                <div className="max-w-[140px] truncate text-xs text-muted-foreground">
+                  {row.sourceFile}
+                </div>
+              ) : null}
             </TableCell>
             <TableCell>
               <button
@@ -187,6 +200,9 @@ function MachineEdgeList({
                 ? ` · ${edge.variants.filter((v) => v !== "未标注").join("、")}`
                 : ""}
             </p>
+            {edge.files?.length ? (
+              <p className="text-xs text-muted-foreground">{edge.files.join("、")}</p>
+            ) : null}
           </div>
           <div className="text-xs text-muted-foreground sm:text-right">
             {edge.dates.map((d) => d.slice(5)).join("、")}
@@ -206,6 +222,7 @@ function MoldDetail({
   onPickMachine: (id: string) => void;
   onPickMold: (id: string) => void;
 }) {
+  const dataset = useDataset();
   const rows = recordsForMold(dataset, mold.canonical);
 
   return (
@@ -215,7 +232,7 @@ function MoldDetail({
           {mold.canonical}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          这 14 天实际出现过的机台：
+          纳入的表里实际出现过的机台：
           {mold.machines.map((m) => m.machine).join("、") || "无"}
         </p>
         {mold.rawForms.length > 0 ? (
@@ -247,7 +264,8 @@ function MoldDetail({
   );
 }
 
-export function LookupApp() {
+export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
+  const [dataset, setDataset] = useState(initialDataset);
   const [tab, setTab] = useState("mold");
   const [moldQuery, setMoldQuery] = useState("");
   const [machineQuery, setMachineQuery] = useState("");
@@ -262,11 +280,11 @@ export function LookupApp() {
           b.machines.length - a.machines.length ||
           a.canonical.localeCompare(b.canonical)
       );
-  }, [moldQuery]);
+  }, [dataset, moldQuery]);
 
   const machineResults = useMemo(() => {
     return dataset.machines.filter((m) => machineMatches(m, machineQuery));
-  }, [machineQuery]);
+  }, [dataset, machineQuery]);
 
   const activeMold =
     dataset.molds.find((m) => m.canonical === selectedMold) ??
@@ -300,8 +318,9 @@ export function LookupApp() {
           用模具号找对应过的机台
         </h1>
         <p className="max-w-3xl text-muted-foreground">
-          《转模记录9月份.xlsx》2026 年 9 月 1–14 日。只认表里实际出现过的
-          模具号和机台号，不做同组机台联想。机种名、上/下勾选只作备注。
+          已纳入 {dataset.meta.sourceFiles.length} 份转模表
+          {dataset.meta.period ? `，覆盖 ${dataset.meta.period}` : ""}
+          。只认表里实际出现过的模具号和机台号，新月份继续导入即可累加。
         </p>
       </header>
 
@@ -315,6 +334,7 @@ export function LookupApp() {
         />
       </div>
 
+    <DatasetContext.Provider value={dataset}>
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(String(value))}
@@ -323,6 +343,7 @@ export function LookupApp() {
         <TabsList variant="line" className="h-auto w-full flex-wrap justify-start">
           <TabsTrigger value="mold">查模具</TabsTrigger>
           <TabsTrigger value="machine">查机台</TabsTrigger>
+          <TabsTrigger value="import">导入新表</TabsTrigger>
           <TabsTrigger value="rules">已确认规则</TabsTrigger>
         </TabsList>
 
@@ -450,6 +471,10 @@ export function LookupApp() {
           </div>
         </TabsContent>
 
+        <TabsContent value="import">
+          <ImportPanel dataset={dataset} onDataset={setDataset} />
+        </TabsContent>
+
         <TabsContent value="rules" className="space-y-4">
           <Card>
             <CardHeader>
@@ -492,6 +517,7 @@ export function LookupApp() {
           ))}
         </TabsContent>
       </Tabs>
+    </DatasetContext.Provider>
     </div>
   );
 }
@@ -507,13 +533,14 @@ function MachineDetail({
   onPickMold: (id: string) => void;
   onPickMachine: (id: string) => void;
 }) {
+  const dataset = useDataset();
   const rows = recordsForMachine(dataset, machineId);
   return (
     <div className="space-y-4">
       <div>
         <h2 className="font-mono text-2xl font-semibold">{machineId}</h2>
         <p className="text-sm text-muted-foreground">
-          这 14 天对上过 {molds.length} 个模具号
+          纳入的表里对上过 {molds.length} 个模具号
         </p>
       </div>
       <div className="flex flex-wrap gap-2">

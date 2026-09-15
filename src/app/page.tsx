@@ -1,9 +1,11 @@
 import { LookupApp } from "@/components/lookup-app";
+import { readDataset } from "@/lib/store";
 
-export default function Home() {
+export default async function Home() {
+  const dataset = await readDataset();
   return (
     <main className="min-h-full">
-      <LookupApp />
+      <LookupApp initialDataset={dataset} />
     </main>
   );
 }

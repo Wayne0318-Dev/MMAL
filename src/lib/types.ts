@@ -12,6 +12,7 @@ export type MoldIdentity = {
 
 export type RecordRow = {
   id: string;
+  sourceFile: string;
   sheet: string;
   date: string;
   shift: string;
@@ -48,6 +49,7 @@ export type MachineEdge = {
   variants: string[];
   products: string[];
   dates: string[];
+  files: string[];
   source: MachineSource;
 };
 
@@ -77,9 +79,18 @@ export type Question = {
   answer: string;
 };
 
+export type SourceFile = {
+  filename: string;
+  recordCount: number;
+  dateMin: string | null;
+  dateMax: string | null;
+  sheets: string[];
+};
+
 export type Dataset = {
   meta: {
     sourceFile: string;
+    sourceFiles: SourceFile[];
     period: string;
     sheets: string[];
     recordCount: number;
