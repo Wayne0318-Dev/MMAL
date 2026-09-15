@@ -213,6 +213,8 @@ turso db tokens create mold-machine
 ## 常见卡住的地方
 
 - **GitHub / Vercel 网页打不开**：中国大陆常见情况。车间查询不要依赖 GitHub；改走本文开头的 **方案 B**。
+- **Vercel 卡片写着 No Production Deployment**：GitHub 仓库是空的，或这个项目的代码还没推进去。Vercel 没有可构建的文件，网址不会出现查询页。必须先把本项目完整代码推到 Vercel 所连接的那个 GitHub 仓库，等 Deployments 出现一次绿色 Production。
+- **浏览器 ERR_CONNECTION_RESET / 无法访问此页面**：从中国大陆打开 `*.vercel.app` 经常被重置，和 Turso 是否建好无关。即便部署成功，车间电脑也可能打不开。这种情况改走 **方案 B**。
 - **Vercel 列表里没有仓库**：第 1 步没建 GitHub 仓库，或授权时没勾这个仓库。到 Vercel → Settings → Git 重新授权。
 - **构建成功但导入报错 / 仍显示本机**：环境变量没填、填错名、或填完没 Redeploy。
 - **导入口令不对**：网站上填的必须和 Vercel 里 `IMPORT_KEY` 完全一致。
