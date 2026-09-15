@@ -31,30 +31,71 @@ npm config set registry https://registry.npmmirror.com
 
 ---
 
-## 方案 B：香港/国内轻量 + Docker（不经过 GitHub）
+## 方案 B：香港/国内轻量 + Docker
 
-需要：一台 **24 小时开机** 的云主机（腾讯云/阿里云轻量，地域选 **香港** 通常从大陆更稳；选国内要自己备案域名的，也可以先用 IP 访问）。上面安装 Docker。把本项目文件夹拷到服务器（U 盘、网盘、能连上时再拉代码都可以）。
+车间从大陆访问。不依赖 Vercel。域名不是必须的，用 `http://公网IP:43127` 即可。
 
-1. 在项目目录：
+### 腾讯云轻量（网页登录，不必从电脑上传文件夹）
+
+镜像选 **Ubuntu24.04-Docker** 时，服务器已自带 Docker。代码优先在服务器上从 GitHub 拉取；只有 `git clone` 失败才改用压缩包上传。
+
+1. 控制台左边点 **服务器** → 点开实例 → 点 **登录**（网页终端，不用装软件）。
+2. 粘贴下面命令，整段一次回车（把导入口令换成你们自己的，不要用示例字）：
+
+```bash
+sudo apt-get update -y
+sudo apt-get install -y git wget unzip
+cd /root
+git clone --depth 1 https://github.com/Wayne0318-Dev/MMAL.git
+cd MMAL
+cp .env.vps.example .env
+sed -i 's/请改成自己的导入口令/换成你们的导入口令/' .env
+docker compose up -d --build
+```
+
+`git clone` 若卡住或报错，不要反复刷新网页，改用：
+
+```bash
+cd /root
+wget -O mmal.zip https://github.com/Wayne0318-Dev/MMAL/archive/refs/heads/main.zip
+unzip -o mmal.zip
+cd MMAL-main
+cp .env.vps.example .env
+sed -i 's/请改成自己的导入口令/换成你们的导入口令/' .env
+docker compose up -d --build
+```
+
+构建第一次要几分钟。结束后执行：
+
+```bash
+docker compose ps
+```
+
+状态为 `running` 后，浏览器打开 `http://公网IP:43127`（例如 `http://129.204.51.76:43127`）。点 **导入新表**，应显示 **数据在服务器**。防火墙必须已放行 TCP **43127**。
+
+Docker 拉基础镜像很慢时，可先写入腾讯云镜像再构建：
+
+```bash
+sudo mkdir -p /etc/docker
+echo '{"registry-mirrors":["https://mirror.ccs.tencentyun.com"]}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
+
+然后回到项目目录再执行 `docker compose up -d --build`。
+
+更新程序：在同一目录再 `git pull`（或重新下载 zip 覆盖）后 `docker compose up -d --build`。表格在 Docker 卷 `mold-data` 里，重建不会清数据。
+
+### 通用步骤（已有项目文件夹时）
 
 ```bash
 cp .env.vps.example .env
 ```
 
-2. 用记事本打开 `.env`，把 `IMPORT_KEY=` 改成你们自己的导入口令。
-3. 启动：
+编辑 `.env` 里的 `IMPORT_KEY`，然后：
 
 ```bash
 docker compose up -d --build
 ```
-
-国内构建慢或 npm 失败时，`.env` 里已有 `NPM_REGISTRY=https://registry.npmmirror.com`。
-4. 浏览器打开 `http://服务器公网IP:43127`
-5. 点 **导入新表**，应显示 **数据在服务器**。8 月、9 月表会在第一次启动时写入数据盘。之后导入十月、十一月，文件留在服务器硬盘，不依赖车间电脑，也不依赖 GitHub。
-
-安全：这台机器请设防火墙，只放行 `43127`（或前面再挂 Nginx + 密码）。导入口令不要用默认的「请改成自己的导入口令」。
-
-更新程序：把新代码覆盖到同一目录后再次 `docker compose up -d --build`。数据在 Docker 卷 `mold-data` 里，重建镜像不会清表格。
 
 ---
 
