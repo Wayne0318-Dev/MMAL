@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileUp, Trash2 } from "lucide-react";
 import type { Dataset } from "@/lib/types";
+import type { StorageInfo } from "@/lib/storage-types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -31,6 +33,19 @@ export function ImportPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importKey, setImportKey] = useState("");
+  const [storage, setStorage] = useState<StorageInfo | null>(
+    dataset.meta.storage ?? null
+  );
+
+  useEffect(() => {
+    fetch("/api/storage")
+      .then((r) => r.json())
+      .then((info: StorageInfo) => setStorage(info))
+      .catch(() => {});
+  }, []);
+
+  const writeProtected = storage?.writeProtected ?? dataset.meta.storage?.writeProtected;
 
   async function upload(file: File) {
     setBusy(true);
@@ -39,6 +54,7 @@ export function ImportPanel({
     try {
       const body = new FormData();
       body.set("file", file);
+      if (importKey) body.set("importKey", importKey);
       const res = await fetch("/api/import", { method: "POST", body });
       const json = await res.json();
       if (!res.ok) {
@@ -46,6 +62,7 @@ export function ImportPanel({
         return;
       }
       onDataset(json.dataset);
+      if (json.dataset?.meta?.storage) setStorage(json.dataset.meta.storage);
       const warnings = (json.warnings as string[] | undefined)?.filter(Boolean) ?? [];
       setMessage(
         `已纳入「${file.name}」。当前共 ${json.dataset.meta.sourceFiles.length} 份表、${json.dataset.meta.recordCount} 条记录。` +
@@ -59,20 +76,27 @@ export function ImportPanel({
   }
 
   async function remove(filename: string) {
-    if (!confirm(`从汇总里去掉「${filename}」？磁盘上的这份表也会删除。`)) return;
+    const where =
+      storage?.mode === "cloud" ? "会从云端汇总里去掉这份表。" : "本机这份表文件也会删除。";
+    if (!confirm(`去掉「${filename}」？${where}`)) return;
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const res = await fetch(`/api/sources?filename=${encodeURIComponent(filename)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/sources?filename=${encodeURIComponent(filename)}`,
+        {
+          method: "DELETE",
+          headers: importKey ? { "x-import-key": importKey } : undefined,
+        }
+      );
       const json = await res.json();
       if (!res.ok) {
         setError(json.error || "删除失败");
         return;
       }
       onDataset(json.dataset);
+      if (json.dataset?.meta?.storage) setStorage(json.dataset.meta.storage);
       setMessage(`已去掉「${filename}」。`);
     } catch {
       setError("删除失败，请再试一次。");
@@ -83,15 +107,39 @@ export function ImportPanel({
 
   return (
     <div className="space-y-4">
+      <Alert>
+        <AlertTitle>
+          {storage?.mode === "cloud" ? "数据在云端" : "数据在本机"}
+        </AlertTitle>
+        <AlertDescription>
+          {storage?.label ||
+            "未配置云数据库时，导入只写到这台电脑；关电脑或删表格后，查询会变。"}
+        </AlertDescription>
+      </Alert>
+
       <Card>
         <CardHeader>
           <CardTitle>继续往上加月份</CardTitle>
           <CardDescription>
-            转模记录是滚动的。十月、十一月把新表导进来即可，同一模具号会把各月出现过的机台合在一起。
-            同名文件再导一次只替换该文件，不会把同一月加两遍。
+            十月、十一月把新表导进来即可。同一模具号会把各月机台合在一起。同名文件再导一次只替换该文件。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {writeProtected ? (
+            <div className="space-y-1">
+              <label className="text-sm font-medium" htmlFor="import-key">
+                导入口令
+              </label>
+              <Input
+                id="import-key"
+                type="password"
+                value={importKey}
+                onChange={(e) => setImportKey(e.target.value)}
+                placeholder="导入或删除前填写"
+                autoComplete="off"
+              />
+            </div>
+          ) : null}
           <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-8 text-sm hover:bg-muted/50">
             <FileUp className="size-5" />
             <span>{busy ? "正在读表…" : "选择 .xlsx 转模记录表"}</span>

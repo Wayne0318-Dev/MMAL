@@ -1,86 +1,125 @@
-import { promises as fs } from "fs";
-import path from "path";
-import { buildDataset, emptyDataset } from "@/lib/build-dataset";
-import { parseWorkbookBuffer } from "@/lib/parse-workbook";
+import {
+  listLocalXlsx,
+  readLocalSnapshot,
+  readLocalWorkbooks,
+  rebuildFromWorkbooks,
+  removeLocalUpload,
+  saveLocalUpload,
+  writeLocalSnapshot,
+} from "@/lib/store-files";
+import {
+  tursoConfigured,
+  tursoRebuild,
+  tursoReadSnapshot,
+  tursoRemoveWorkbook,
+  tursoSaveWorkbook,
+  tursoWorkbookCount,
+} from "@/lib/store-turso";
+import type { RebuildResult, StorageInfo } from "@/lib/storage-types";
+import { emptyDataset } from "@/lib/build-dataset";
 import type { Dataset } from "@/lib/types";
 
-export function dataDir() {
-  return path.join(process.cwd(), "data");
-}
-
-export function datasetPath() {
-  return path.join(process.cwd(), "src/data/dataset.json");
-}
-
-function safeXlsxName(filename: string) {
-  const base = path.basename(filename).replace(/[/\\]/g, "");
-  if (!base.toLowerCase().endsWith(".xlsx")) {
-    throw new Error("只接受 .xlsx 文件（与现用转模记录同一格式）。");
+export function storageInfo(): StorageInfo {
+  if (tursoConfigured()) {
+    return {
+      mode: "cloud",
+      writeProtected: Boolean(process.env.IMPORT_KEY) || Boolean(process.env.VERCEL),
+      label: "云端数据库（关电脑也能查，导入不会丢）",
+    };
   }
-  if (base.startsWith("~$") || base.startsWith(".")) {
-    throw new Error("不能导入临时文件。");
+  return {
+    mode: "local",
+    writeProtected: Boolean(process.env.IMPORT_KEY),
+    label: "本机文件（关电脑或删表格后，查询会受影响）",
+  };
+}
+
+function attachStorage(dataset: Dataset): Dataset {
+  return {
+    ...dataset,
+    meta: {
+      ...dataset.meta,
+      storage: storageInfo(),
+    },
+  };
+}
+
+async function seedCloudFromRepo() {
+  if ((await tursoWorkbookCount()) > 0) return;
+  const local = await readLocalWorkbooks();
+  for (const file of local) {
+    await tursoSaveWorkbook(file.filename, file.buffer);
   }
-  return base;
-}
-
-export async function listXlsxFiles() {
-  try {
-    const names = await fs.readdir(dataDir());
-    return names
-      .filter((n) => n.toLowerCase().endsWith(".xlsx") && !n.startsWith("~$"))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-export async function rebuildFromDataDir(): Promise<{
-  dataset: Dataset;
-  warnings: string[];
-}> {
-  const files = await listXlsxFiles();
-  const warnings: string[] = [];
-  const records = [];
-  const sources = [];
-
-  for (const filename of files) {
-    const buf = await fs.readFile(path.join(dataDir(), filename));
-    const parsed = await parseWorkbookBuffer(buf, filename);
-    warnings.push(...parsed.warnings);
-    records.push(...parsed.records);
-    sources.push({
-      filename,
-      recordCount: parsed.records.length,
-      dateMin: parsed.dateMin,
-      dateMax: parsed.dateMax,
-      sheets: parsed.sheets,
-    });
-  }
-
-  const dataset = files.length ? buildDataset(records, sources) : emptyDataset();
-  await fs.mkdir(path.dirname(datasetPath()), { recursive: true });
-  await fs.writeFile(datasetPath(), JSON.stringify(dataset, null, 2), "utf8");
-  return { dataset, warnings };
-}
-
-export async function saveUpload(filename: string, buffer: Buffer) {
-  const safe = safeXlsxName(filename);
-  await fs.mkdir(dataDir(), { recursive: true });
-  await fs.writeFile(path.join(dataDir(), safe), buffer);
-  return rebuildFromDataDir();
-}
-
-export async function removeSource(filename: string) {
-  const safe = safeXlsxName(filename);
-  await fs.unlink(path.join(dataDir(), safe));
-  return rebuildFromDataDir();
 }
 
 export async function readDataset(): Promise<Dataset> {
-  try {
-    const text = await fs.readFile(datasetPath(), "utf8");
-    return JSON.parse(text) as Dataset;
-  } catch {
-    return emptyDataset();
+  if (tursoConfigured()) {
+    await seedCloudFromRepo();
+    const snapshot = await tursoReadSnapshot();
+    if (snapshot) return attachStorage(snapshot);
+    const rebuilt = await tursoRebuild();
+    return attachStorage(rebuilt.dataset);
   }
+  const snapshot = await readLocalSnapshot();
+  if (snapshot) return attachStorage(snapshot);
+  const files = await readLocalWorkbooks();
+  if (!files.length) return attachStorage(emptyDataset());
+  const rebuilt = await rebuildFromWorkbooks(files);
+  await writeLocalSnapshot(rebuilt.dataset);
+  return attachStorage(rebuilt.dataset);
 }
+
+export async function saveUpload(
+  filename: string,
+  buffer: Buffer
+): Promise<RebuildResult> {
+  if (tursoConfigured()) {
+    await seedCloudFromRepo();
+    await tursoSaveWorkbook(filename, buffer);
+    const result = await tursoRebuild();
+    return { ...result, dataset: attachStorage(result.dataset) };
+  }
+  if (process.env.VERCEL) {
+    throw new Error(
+      "网站已上线但还没接云数据库。请配置 TURSO_DATABASE_URL 和 TURSO_AUTH_TOKEN，否则导入会丢。"
+    );
+  }
+  await saveLocalUpload(filename, buffer);
+  const result = await rebuildFromWorkbooks(await readLocalWorkbooks());
+  await writeLocalSnapshot(result.dataset);
+  return { ...result, dataset: attachStorage(result.dataset) };
+}
+
+export async function removeSource(filename: string): Promise<RebuildResult> {
+  if (tursoConfigured()) {
+    await tursoRemoveWorkbook(filename);
+    const result = await tursoRebuild();
+    return { ...result, dataset: attachStorage(result.dataset) };
+  }
+  if (process.env.VERCEL) {
+    throw new Error("网站已上线但还没接云数据库，无法改数据。");
+  }
+  await removeLocalUpload(filename);
+  const files = await readLocalWorkbooks();
+  const result = files.length
+    ? await rebuildFromWorkbooks(files)
+    : { dataset: emptyDataset(), warnings: [] };
+  await writeLocalSnapshot(result.dataset);
+  return { ...result, dataset: attachStorage(result.dataset) };
+}
+
+export async function rebuildFromDataDir(): Promise<RebuildResult> {
+  if (tursoConfigured()) {
+    await seedCloudFromRepo();
+    const result = await tursoRebuild();
+    return { ...result, dataset: attachStorage(result.dataset) };
+  }
+  const names = await listLocalXlsx();
+  const result = names.length
+    ? await rebuildFromWorkbooks(await readLocalWorkbooks())
+    : { dataset: emptyDataset(), warnings: [] };
+  await writeLocalSnapshot(result.dataset);
+  return { ...result, dataset: attachStorage(result.dataset) };
+}
+
+export { storageInfo as getStorageInfo };

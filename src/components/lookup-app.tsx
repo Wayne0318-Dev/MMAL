@@ -320,7 +320,10 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
         <p className="max-w-3xl text-muted-foreground">
           已纳入 {dataset.meta.sourceFiles.length} 份转模表
           {dataset.meta.period ? `，覆盖 ${dataset.meta.period}` : ""}
-          。只认表里实际出现过的模具号和机台号，新月份继续导入即可累加。
+          。
+          {dataset.meta.storage?.mode === "cloud"
+            ? "数据在云端，关电脑也能查，导入不会丢。"
+            : "当前写在本机。要关电脑也能用，请按说明接上免费云库并部署。"}
         </p>
       </header>
 

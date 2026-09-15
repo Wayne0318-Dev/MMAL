@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { removeSource } from "@/lib/store";
+import { assertWriteAccess } from "@/lib/write-guard";
 
 export const runtime = "nodejs";
 
 export async function DELETE(request: Request) {
   try {
+    assertWriteAccess(request);
     const url = new URL(request.url);
     const filename = url.searchParams.get("filename");
     if (!filename) {

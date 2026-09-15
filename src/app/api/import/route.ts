@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { saveUpload } from "@/lib/store";
+import { assertWriteAccess } from "@/lib/write-guard";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
+    assertWriteAccess(request, form);
     const file = form.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "请选择一份 .xlsx 转模记录表。" }, { status: 400 });

@@ -4,8 +4,6 @@
 
 只认 **机台编号 ↔ 模具编号**。机种名、上/下勾选只作备注。不按字母组联想其他机台。
 
-转模记录是按月滚动的：把新的 `.xlsx` 放到 `data/`，或在页面「导入新表」里上传。多份表会累加；同名文件再导入会替换该文件，不会把同一月加两遍。
-
 ## 本地运行
 
 需要 Node.js 20+。
@@ -16,52 +14,56 @@ npm run data
 npm run dev
 ```
 
-本机浏览器打开 http://127.0.0.1:43127
+本机打开 http://127.0.0.1:43127
 
-长期在自己电脑上跑（给异地访问用）用生产模式，关电脑就无法访问：
+未配置云数据库时，数据写在 `data/*.xlsx` 和 `src/data/dataset.json`。关电脑不影响本机已保存的文件，但别人打不开；在文件夹里删掉表格后，下一次重建查询会少那一份。
 
-```bash
-npm run build
-npm run start
-```
+## 关电脑也能查、导入也不丢（免费）
 
-## 异地访问（免费）
+把网站放到 [Vercel](https://vercel.com)（免费），表格和汇总放到 [Turso](https://turso.tech)（免费库）。部署完成后用 Vercel 给的 `https://……vercel.app` 访问，电脑关机也行。
 
-没有数据库，数据在跑程序的那台电脑上。异地要查同一份结果，就是让那台电脑继续开着，再用下面任一免费方式连过去。
+### 1. 把代码放到 GitHub
 
-**推荐：两地都是自己人用 — Tailscale（免费）**
+若还没有仓库，在 Cursor 里点 **Create repo**，公开或私有均可。
 
-1. 放数据的电脑、以及要查询的电脑/手机，都安装 [Tailscale](https://tailscale.com/download)，用同一个账号登录。
-2. 放数据的电脑执行 `npm run build && npm run start`。
-3. 在 Tailscale 后台复制这台电脑的地址（形如 `100.x.x.x`）。
-4. 异地浏览器打开 `http://100.x.x.x:43127`。
+### 2. 建一个免费 Turso 库
 
-不暴露到公网，导入新表也还是写在这台电脑上。
+1. 打开 https://turso.tech 注册（可用 GitHub 登录）。
+2. 新建一个数据库，例如 `mold-machine`。
+3. 复制 **Database URL**（`libsql://…`）和 **Auth Token**。
 
-**要一个临时公网链接 — Cloudflare Tunnel（免费）**
-
-放数据的电脑已在跑 `npm run start` 时，再开一个终端：
+命令行也可以：
 
 ```bash
-npx cloudflared tunnel --url http://127.0.0.1:43127
+curl -sSfL https://get.tur.so/install.sh | bash
+turso auth login
+turso db create mold-machine
+turso db show mold-machine --url
+turso db tokens create mold-machine
 ```
 
-会给出 `https://xxxx.trycloudflare.com`。异地用这个地址即可。电脑关机或命令停掉，链接失效；免费临时域名每次启动可能变化。
+### 3. 部署到 Vercel
 
-**不要用 Vercel 一类免费网站做导入。** 那种环境没有长期磁盘，上传的月份表下次会丢。只查已经进过仓库的数据才勉强能用。
+1. 打开 https://vercel.com ，用 GitHub 登录，Import 这个仓库。
+2. 在 Project → Settings → Environment Variables 添加：
 
-## 数据
+| 名称 | 值 |
+| --- | --- |
+| `TURSO_DATABASE_URL` | 上一步的 URL |
+| `TURSO_AUTH_TOKEN` | 上一步的 Token |
+| `IMPORT_KEY` | 自己设的导入口令（导入/删除表时用） |
 
-- 原始表：`data/*.xlsx`（目前已有 9 月份）
-- 汇总结果：`src/data/dataset.json`
+3. Deploy。完成后打开 Vercel 给的网址。
 
-命令行重建：
+第一次打开会把仓库里已有的 9 月份表写入云库。之后在「导入新表」里上传十月、十一月，数据留在 Turso，不依赖任何一台车间电脑。
 
-```bash
-npm run data
-```
+查询不用口令；导入和删除要填 `IMPORT_KEY`。不要把口令写进代码或发给无关的人。
 
-新表表头需与现表相同：机台、机种品名、模具编号、上/下；工作表里要有「日期：YYYY 年 M 月 D 日」或表名如 `10.1`。
+## 数据规则
+
+- 新表表头需与现表相同：机台、机种品名、模具编号、上/下
+- 工作表里要有「日期：YYYY 年 M 月 D 日」或表名如 `10.1`
+- 同名文件再导入会替换该文件，不会把同一月加两遍
 
 ## 已确认规则
 

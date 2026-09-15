@@ -98,6 +98,11 @@ export type Dataset = {
     moldCount: number;
     machineCount: number;
     generatedNote: string;
+    storage?: {
+      mode: "cloud" | "local";
+      writeProtected: boolean;
+      label: string;
+    };
   };
   parsingRules: string[];
   questions: Question[];
