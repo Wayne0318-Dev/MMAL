@@ -20,44 +20,11 @@ npm run dev
 
 ## 关电脑也能查、导入也不丢（免费）
 
-把网站放到 [Vercel](https://vercel.com)（免费），表格和汇总放到 [Turso](https://turso.tech)（免费库）。部署完成后用 Vercel 给的 `https://……vercel.app` 访问，电脑关机也行。
+把网站放到 [Vercel](https://vercel.com)，表格放到 [Turso](https://turso.tech)，都用免费档。完成后用 `https://……vercel.app` 访问。
 
-### 1. 把代码放到 GitHub
+**点哪里、填什么：见 [DEPLOY.md](./DEPLOY.md)。** 顺序是：Create repo → 建 Turso 库 → Vercel 导入并填三个环境变量 → 打开网址确认「数据在云端」。
 
-若还没有仓库，在 Cursor 里点 **Create repo**，公开或私有均可。
-
-### 2. 建一个免费 Turso 库
-
-1. 打开 https://turso.tech 注册（可用 GitHub 登录）。
-2. 新建一个数据库，例如 `mold-machine`。
-3. 复制 **Database URL**（`libsql://…`）和 **Auth Token**。
-
-命令行也可以：
-
-```bash
-curl -sSfL https://get.tur.so/install.sh | bash
-turso auth login
-turso db create mold-machine
-turso db show mold-machine --url
-turso db tokens create mold-machine
-```
-
-### 3. 部署到 Vercel
-
-1. 打开 https://vercel.com ，用 GitHub 登录，Import 这个仓库。
-2. 在 Project → Settings → Environment Variables 添加：
-
-| 名称 | 值 |
-| --- | --- |
-| `TURSO_DATABASE_URL` | 上一步的 URL |
-| `TURSO_AUTH_TOKEN` | 上一步的 Token |
-| `IMPORT_KEY` | 自己设的导入口令（导入/删除表时用） |
-
-3. Deploy。完成后打开 Vercel 给的网址。
-
-第一次打开会把仓库里已有的 9 月份表写入云库。之后在「导入新表」里上传十月、十一月，数据留在 Turso，不依赖任何一台车间电脑。
-
-查询不用口令；导入和删除要填 `IMPORT_KEY`。不要把口令写进代码或发给无关的人。
+第一次打开会把仓库里的 8 月、9 月表写入云库。之后在「导入新表」上传新月份。查询不用口令；导入和删除要填你设的 `IMPORT_KEY`。
 
 ## 数据规则
 
