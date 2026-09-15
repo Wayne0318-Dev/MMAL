@@ -49,7 +49,12 @@ cd /root
 git clone --depth 1 https://github.com/Wayne0318-Dev/MMAL.git
 cd MMAL
 cp .env.vps.example .env
-sed -i 's/请改成自己的导入口令/换成你们的导入口令/' .env
+nano .env
+```
+
+把 `IMPORT_KEY=` 后面改成你们自己的导入口令（可与 Vercel 上同一条）。`Ctrl+O` 回车保存，`Ctrl+X` 退出。然后：
+
+```bash
 docker compose up -d --build
 ```
 
@@ -61,7 +66,12 @@ wget -O mmal.zip https://github.com/Wayne0318-Dev/MMAL/archive/refs/heads/main.z
 unzip -o mmal.zip
 cd MMAL-main
 cp .env.vps.example .env
-sed -i 's/请改成自己的导入口令/换成你们的导入口令/' .env
+nano .env
+```
+
+同样改 `IMPORT_KEY` 后：
+
+```bash
 docker compose up -d --build
 ```
 

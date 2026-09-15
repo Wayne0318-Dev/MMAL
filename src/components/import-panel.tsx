@@ -325,8 +325,22 @@ function PreviewCard({
           {preview.sheets.length > 12 ? ` 等 ${preview.sheets.length} 张` : ""}
         </p>
       ) : null}
-      <IdList label="新出现的模具" ids={preview.newMolds} />
-      <IdList label="新出现的机台" ids={preview.newMachines} />
+      <IdList
+        label={
+          preview.replacing
+            ? "这份表里有、其他月份没有的模具"
+            : "新出现的模具"
+        }
+        ids={preview.newMolds}
+      />
+      <IdList
+        label={
+          preview.replacing
+            ? "这份表里有、其他月份没有的机台"
+            : "新出现的机台"
+        }
+        ids={preview.newMachines}
+      />
       {preview.droppedMolds.length ? (
         <IdList
           label="替换后将从汇总里消失的模具（只出现在旧的同名文件里）"
