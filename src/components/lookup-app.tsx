@@ -11,6 +11,7 @@ import {
   machineListText,
   rangeStart,
   similarMoldIds,
+  sortRecordsNewestFirst,
   type DateRange,
 } from "@/lib/lookup";
 import {
@@ -165,6 +166,7 @@ function RecordTable({
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground">没有转模记录。</p>;
   }
+  const ordered = sortRecordsNewestFirst(rows);
   return (
     <Table>
       <TableHeader>
@@ -179,7 +181,7 @@ function RecordTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((row) => (
+        {ordered.map((row) => (
           <TableRow key={row.id}>
             <TableCell>
               <div className="whitespace-nowrap">{row.date.slice(5)}</div>
@@ -799,7 +801,7 @@ function MoldEmpty({
       <p>
         {existsOutsideRange
           ? "这个编号在表里有，但不在当前时间范围内。"
-          : "纳入的表里没有这个编号。可能还没导入那个月，或写法不同（不要把 S25004 和 S250004 当成同一个）。"}
+          : "纳入的表里没有这个编号。可能还没导入那个月，或写法不同。"}
       </p>
       {existsOutsideRange ? (
         <button type="button" className="underline" onClick={onShowAll}>

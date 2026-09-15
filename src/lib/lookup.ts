@@ -42,6 +42,10 @@ function compareRecords(a: RecordRow, b: RecordRow) {
   return a.row - b.row;
 }
 
+export function sortRecordsNewestFirst(records: RecordRow[]) {
+  return [...records].sort((a, b) => compareRecords(b, a));
+}
+
 export function lastMount(records: RecordRow[]): RecordRow | null {
   if (!records.length) return null;
   const sorted = [...records].sort(compareRecords);
