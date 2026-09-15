@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Parse 转模记录9月份.xlsx into a queryable mold-machine dataset.
+"""Parse 转模记录9月份.xlsx into mold ↔ machine associations.
 
-Identity rules are conservative: suspected typos are flagged, never silently merged.
+Rules confirmed by the user (2026-09-15):
+- 上/下 = mount / unmount. Checkmarks are optional.
+- Blank 机台 inherits the previous machine in the same shift.
+- 前模/后模 are two halves of one mold; lookup is by main number.
+- Only record machines that actually appeared. Do not infer same-letter machines.
+- Product names are annotations, not identity.
+- Different mold numbers in one cell are different molds, all linked to that machine.
+- M2 after C0151-149M1 means C0151-149M2.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
 from datetime import datetime, time
 from pathlib import Path
 
@@ -17,44 +23,14 @@ import openpyxl
 SRC = Path(__file__).resolve().parents[1] / "data" / "转模记录9月份.xlsx"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "dataset.json"
 
-SUSPECTED_TYPOS = {
-    "S25004": {
-        "guess": "S250004",
-        "reason": "9.4 C09 上模品名为 L09导光柱，同模具在其他天均写作 S250004 / 后模S250004。",
-    },
-    "S26008": {
-        "guess": None,
-        "reason": "位数少一位。品名是 Remo触屏支架，但 Remo触屏支架在 C12 上是 S250137；S260080 在 C20 上是试模/T68前壳组件。无法判断应归哪一个。",
-    },
-    "S2600091": {
-        "guess": "S260091",
-        "reason": "试模编号多写一个 0。S260091 多次作为试模出现在 C03/C04。",
-    },
-    "SS230295": {
-        "guess": "S230295",
-        "reason": "多写一个 S。品名同为 EMMA 高音后罩-EM24。",
-    },
-    "250187": {
-        "guess": "S250187",
-        "reason": "缺 S 前缀。品名 LOG Lanky Diffuser。",
-    },
-    "240110": {
-        "guess": "S240110",
-        "reason": "Excel 把模具号存成数字，缺 S 前缀。品名 AY7盆架组。",
-    },
-    "250185B": {
-        "guess": "S250185",
-        "reason": "缺 S 前缀，末尾带 B。同机台 C03 次日有 S250185 试模。B 可能是后模/版本，也可能是笔误。",
-    },
-    "s240130": {
-        "guess": "S240130",
-        "reason": "S 写成小写。",
-    },
-    "C151-152": {
-        "guess": "C0151-152",
-        "reason": "与 C0151-153、C0151-149 同属 C0151 系列，但位数和末段不同。品名是 MOJO装饰圈，而 C0151-153 是 MOJO 按键，不一定是同一套模。",
-    },
+# Confirmed identity fixes (not guesses).
+MOLD_ID_ALIASES = {
+    "S26008": "S250137",  # Q8 Remo触屏支架
+    "SS230295": "S230295",  # extra S prefix, same digits
 }
+
+# Mechanical writing-format only: add missing S, uppercase.
+# Digit-count changes (S25004, S2600091) are NOT applied.
 
 
 def cell_str(v):
@@ -75,27 +51,9 @@ def cell_str(v):
     return s if s else None
 
 
-def parse_mold(raw: str | None) -> dict:
-    if not raw:
-        return {
-            "raw": None,
-            "canonical": None,
-            "variant": None,
-            "extraIds": [],
-            "flags": ["missing_mold_number"],
-        }
-
-    flags: list[str] = []
-    parts = [p.strip() for p in re.split(r"[/／]", raw) if p.strip()]
-    primary = parts[0]
-    extra_ids = parts[1:]
-    if extra_ids:
-        flags.append("multiple_ids_in_one_cell")
-        # "M2" after C0151-149M1 is likely C0151-149M2
-        if extra_ids == ["C0151-149M1", "M2"] or extra_ids[-1] == "M2":
-            flags.append("m2_may_mean_c0151_149m2")
-
+def strip_half_marker(token: str) -> tuple[str, str | None]:
     variant = None
+    primary = token.strip()
     if re.search(r"前模", primary):
         variant = "前模"
         primary = re.sub(r"前模\s*", "", primary)
@@ -108,35 +66,24 @@ def parse_mold(raw: str | None) -> dict:
     elif re.match(r"^后", primary):
         variant = "后模"
         primary = re.sub(r"^后", "", primary)
-    elif re.search(r"后模$", primary):
-        variant = "后模"
-        primary = re.sub(r"后模$", "", primary)
-    elif re.search(r"前模$", primary):
-        variant = "前模"
-        primary = re.sub(r"前模$", "", primary)
     elif re.search(r"[A-Za-z0-9]后$", primary):
         variant = "后模"
         primary = re.sub(r"后$", "", primary)
     elif re.search(r"[A-Za-z0-9]前$", primary):
         variant = "前模"
         primary = re.sub(r"前$", "", primary)
+    return primary.strip(), variant
 
-    primary = primary.strip()
-    ab = None
+
+def canonicalize_token(token: str) -> tuple[str, str | None, str | None]:
+    """Return (canonical, half_variant, corrected_from_or_none)."""
+    raw_token = token.strip()
+    primary, variant = strip_half_marker(raw_token)
+
+    # Q14: AB stays on the same main number.
     m_ab = re.match(r"^([A-Za-z]+\d+)(AB)$", primary, re.I)
     if m_ab:
-        ab = "AB"
         primary = m_ab.group(1)
-        flags.append("ab_suffix")
-
-    if re.match(r"^\d", primary):
-        flags.append("missing_S_prefix")
-    if re.match(r"^SS\d", primary, re.I):
-        flags.append("double_S_prefix")
-    if primary[:1] == "s":
-        flags.append("lowercase_s")
-    if variant:
-        flags.append("has_front_or_rear_set")
 
     m_s = re.match(r"^[sS](\d+)$", primary)
     m_ss = re.match(r"^SS(\d+)$", primary, re.I)
@@ -148,30 +95,86 @@ def parse_mold(raw: str | None) -> dict:
     elif m_num:
         canonical = "S" + m_num.group(1)
         if m_num.group(2):
-            flags.append("trailing_letter:" + m_num.group(2).upper())
-            canonical = canonical + m_num.group(2).upper()
+            canonical += m_num.group(2).upper()
     else:
         canonical = primary.upper().replace(" ", "")
 
-    suspected = SUSPECTED_TYPOS.get(raw) or SUSPECTED_TYPOS.get(canonical)
-    if suspected:
-        flags.append("suspected_typo")
+    corrected_from = None
+    if canonical in MOLD_ID_ALIASES:
+        corrected_from = canonical
+        canonical = MOLD_ID_ALIASES[canonical]
+    return canonical, variant, corrected_from
 
-    display = canonical
+
+def expand_cell_tokens(raw: str) -> list[str]:
+    parts = [p.strip() for p in re.split(r"[/／]", raw) if p.strip()]
+    expanded = []
+    prev = None
+    for part in parts:
+        if part.upper() == "M2" and prev and re.search(r"M1$", prev, re.I):
+            expanded.append(re.sub(r"M1$", "M2", prev, flags=re.I))
+        else:
+            expanded.append(part)
+        prev = expanded[-1]
+    return expanded
+
+
+def parse_mold_cell(raw: str | None, product: str | None) -> dict:
+    notes = []
+    if not raw:
+        if product and "Meridian" in product:
+            # Q7
+            return {
+                "raw": None,
+                "canonical": "ZDX3464",
+                "variant": None,
+                "ids": ["ZDX3464"],
+                "display": "ZDX3464",
+                "correctedFrom": "(空)",
+                "correction": "Q7：Meridian支架补号 ZDX3464",
+            }
+        return {
+            "raw": None,
+            "canonical": None,
+            "variant": None,
+            "ids": [],
+            "display": "缺号",
+            "correctedFrom": None,
+            "correction": None,
+        }
+
+    tokens = expand_cell_tokens(raw)
+    ids = []
+    variants = []
+    corrections = []
+    for token in tokens:
+        canonical, variant, corrected_from = canonicalize_token(token)
+        if canonical not in ids:
+            ids.append(canonical)
+        if variant and variant not in variants:
+            variants.append(variant)
+        if corrected_from:
+            corrections.append(f"{corrected_from}→{canonical}")
+
+    primary = ids[0] if ids else None
+    variant = variants[0] if len(variants) == 1 else None
+    display = " / ".join(ids)
     if variant:
-        display += f"-{variant}"
-    if ab:
-        display += f"-{ab}"
+        display = f"{primary}-{variant}" if len(ids) == 1 else display
+
+    correction = None
+    if corrections:
+        correction = "；".join(corrections)
+        notes.append(correction)
 
     return {
         "raw": raw,
-        "canonical": canonical,
+        "canonical": primary,
         "variant": variant,
-        "ab": ab,
-        "extraIds": extra_ids,
-        "flags": flags,
+        "ids": ids,
         "display": display,
-        "suspectedTypo": suspected,
+        "correctedFrom": corrections[0].split("→")[0] if corrections else None,
+        "correction": correction,
     }
 
 
@@ -231,15 +234,7 @@ def parse_workbook():
             if e == "√":
                 action = "下" if action is None else "上+下"
 
-            mold = parse_mold(c)
-            issues = list(mold["flags"])
-            if inherited:
-                issues.append("machine_inherited_from_previous_row")
-            if not action:
-                issues.append("missing_up_or_down")
-            if not b:
-                issues.append("missing_product")
-
+            mold = parse_mold_cell(c, b)
             records.append(
                 {
                     "id": f"{sheet_name}-R{r}",
@@ -251,14 +246,13 @@ def parse_workbook():
                     "machineWritten": bool(a),
                     "inheritedMachine": inherited,
                     "product": b,
-                    "mold": {k: v for k, v in mold.items() if k != "flags"},
+                    "mold": mold,
                     "action": action,
                     "orderTime": None if f in (None, "/") else f,
                     "materialTime": None if g in (None, "/") else g,
                     "changeTime": h,
                     "signTime": i,
                     "note": j,
-                    "issues": issues,
                 }
             )
     return records
@@ -279,7 +273,7 @@ def attach_jobs(records):
             if current:
                 jobs.append(current)
             current = {
-                "id": f"job-{len(jobs)+1:03d}",
+                "id": f"job-{len(jobs) + 1:03d}",
                 "date": rec["date"],
                 "shift": rec["shift"],
                 "machine": rec["machine"],
@@ -291,14 +285,15 @@ def attach_jobs(records):
     if current:
         jobs.append(current)
 
+    rec_by_id = {r["id"]: r for r in records}
     for job in jobs:
-        steps = [r for r in records if r["jobId"] == job["id"]]
+        steps = [rec_by_id[i] for i in job["recordIds"]]
         sequence = []
         for s in steps:
             sequence.append(
                 {
-                    "action": s["action"] or "未标注",
-                    "mold": (s["mold"]["display"] if s["mold"]["canonical"] else "缺号"),
+                    "action": s["action"] or "未勾选",
+                    "mold": s["mold"]["display"],
                     "product": s["product"],
                 }
             )
@@ -309,19 +304,51 @@ def attach_jobs(records):
 
 def classify_job(sequence):
     actions = [s["action"] for s in sequence]
+    molds = [s["mold"] for s in sequence]
     if actions == ["下", "上"]:
+        if molds[0] == molds[1]:
+            return "同一副模下了再上（半边维修/保养后重装）"
         return "标准转模：下旧模 → 上新模"
-    if actions == ["上"]:
-        return "仅上模（未记录下模，或机台原本空置）"
-    if actions == ["下"]:
-        return "仅下模（未记录上模）"
-    if len(sequence) == 2 and sequence[0]["mold"] == sequence[1]["mold"]:
-        return "同一模具下了又上（常见于修模/重装）"
+    if len(sequence) == 1:
+        return "单行记录（机台与模具仍关联）"
     if len(sequence) >= 3:
-        return "同机台连续多次上下模"
-    if "未标注" in actions:
-        return "类别缺失，按机台归属保留"
-    return "其他"
+        return "同机台连续多次装卸"
+    return "同机台多行记录"
+
+
+def add_machine_edge(bucket, rec, mold_id, variant):
+    mach = rec["machine"]
+    existing = next((x for x in bucket["machines"] if x["machine"] == mach), None)
+    source = "inherited" if rec["inheritedMachine"] else "written"
+    if existing is None:
+        bucket["machines"].append(
+            {
+                "machine": mach,
+                "upCount": 1 if rec["action"] == "上" else 0,
+                "downCount": 1 if rec["action"] == "下" else 0,
+                "unknownCount": 1 if rec["action"] not in ("上", "下") else 0,
+                "variants": [variant or "未标注"],
+                "products": [rec["product"]] if rec["product"] else [],
+                "dates": [rec["date"]],
+                "source": source,
+            }
+        )
+        return
+    if rec["action"] == "上":
+        existing["upCount"] += 1
+    elif rec["action"] == "下":
+        existing["downCount"] += 1
+    else:
+        existing["unknownCount"] += 1
+    v = variant or "未标注"
+    if v not in existing["variants"]:
+        existing["variants"].append(v)
+    if rec["product"] and rec["product"] not in existing["products"]:
+        existing["products"].append(rec["product"])
+    if rec["date"] not in existing["dates"]:
+        existing["dates"].append(rec["date"])
+    if source == "written":
+        existing["source"] = "written"
 
 
 def build_indexes(records, jobs):
@@ -338,106 +365,43 @@ def build_indexes(records, jobs):
                 "products": [],
                 "machines": [],
                 "recordIds": [],
-                "issues": [],
-                "suspectedTypo": None,
-                "extraIdsSeen": [],
+                "corrections": [],
             }
         return molds[canonical]
 
     for rec in records:
         m = rec["mold"]
-        canonical = m["canonical"] or "MISSING"
-        bucket = mold_bucket(canonical)
-        bucket["recordIds"].append(rec["id"])
-        if m["raw"] and m["raw"] not in bucket["rawForms"]:
-            bucket["rawForms"].append(m["raw"])
-        if m["variant"] and m["variant"] not in bucket["variants"]:
-            bucket["variants"].append(m["variant"])
-        if rec["product"] and rec["product"] not in bucket["products"]:
-            bucket["products"].append(rec["product"])
-        for extra in m.get("extraIds") or []:
-            if extra not in bucket["extraIdsSeen"]:
-                bucket["extraIdsSeen"].append(extra)
-        for issue in rec["issues"]:
-            if issue not in bucket["issues"]:
-                bucket["issues"].append(issue)
-        if m.get("suspectedTypo"):
-            bucket["suspectedTypo"] = m["suspectedTypo"]
+        ids = m.get("ids") or ([m["canonical"]] if m.get("canonical") else [])
+        if not ids:
+            continue
+        for mold_id in ids:
+            bucket = mold_bucket(mold_id)
+            if rec["id"] not in bucket["recordIds"]:
+                bucket["recordIds"].append(rec["id"])
+            if m["raw"] and m["raw"] not in bucket["rawForms"]:
+                bucket["rawForms"].append(m["raw"])
+            if m.get("variant") and m["variant"] not in bucket["variants"]:
+                bucket["variants"].append(m["variant"])
+            if rec["product"] and rec["product"] not in bucket["products"]:
+                bucket["products"].append(rec["product"])
+            if m.get("correction") and m["correction"] not in bucket["corrections"]:
+                bucket["corrections"].append(m["correction"])
+            add_machine_edge(bucket, rec, mold_id, m.get("variant"))
 
-        mach = rec["machine"]
-        existing = next((x for x in bucket["machines"] if x["machine"] == mach), None)
-        edge_issues = [
-            i
-            for i in rec["issues"]
-            if i
-            not in (
-                "has_front_or_rear_set",
-                "machine_inherited_from_previous_row",
-            )
-        ]
-        confidence = "high"
-        if rec["inheritedMachine"]:
-            confidence = "inherited"
-        if not rec["action"]:
-            confidence = "action_missing"
-        if "missing_mold_number" in rec["issues"]:
-            confidence = "mold_missing"
-        if existing is None:
-            bucket["machines"].append(
-                {
-                    "machine": mach,
-                    "upCount": 1 if rec["action"] == "上" else 0,
-                    "downCount": 1 if rec["action"] == "下" else 0,
-                    "unknownCount": 1 if rec["action"] not in ("上", "下") else 0,
-                    "variants": [m["variant"] or "未标注"],
-                    "products": [rec["product"]] if rec["product"] else [],
-                    "dates": [rec["date"]],
-                    "confidence": confidence,
-                    "issues": list(edge_issues),
+            mach = rec["machine"]
+            if mach not in machines:
+                machines[mach] = {
+                    "id": mach,
+                    "molds": [],
+                    "recordIds": [],
+                    "products": [],
                 }
-            )
-        else:
-            if rec["action"] == "上":
-                existing["upCount"] += 1
-            elif rec["action"] == "下":
-                existing["downCount"] += 1
-            else:
-                existing["unknownCount"] += 1
-            v = m["variant"] or "未标注"
-            if v not in existing["variants"]:
-                existing["variants"].append(v)
-            if rec["product"] and rec["product"] not in existing["products"]:
-                existing["products"].append(rec["product"])
-            if rec["date"] not in existing["dates"]:
-                existing["dates"].append(rec["date"])
-            rank = {"high": 3, "inherited": 2, "action_missing": 1, "mold_missing": 0}
-            if rank[confidence] > rank[existing["confidence"]]:
-                existing["confidence"] = confidence
-            for issue in edge_issues:
-                if issue not in existing["issues"]:
-                    existing["issues"].append(issue)
-
-        if mach not in machines:
-            machines[mach] = {
-                "id": mach,
-                "series": mach[:1],
-                "molds": [],
-                "recordIds": [],
-                "products": [],
-            }
-        machines[mach]["recordIds"].append(rec["id"])
-        if canonical != "MISSING" and canonical not in machines[mach]["molds"]:
-            machines[mach]["molds"].append(canonical)
-        if rec["product"] and rec["product"] not in machines[mach]["products"]:
-            machines[mach]["products"].append(rec["product"])
-
-    # Explicit conflict: S250188 cannot be two products on two machines the same night.
-    if "S250188" in molds:
-        for edge in molds["S250188"]["machines"]:
-            if edge["machine"] == "B09":
-                edge["confidence"] = "conflict"
-                if "same_night_different_product" not in edge["issues"]:
-                    edge["issues"].append("same_night_different_product")
+            if rec["id"] not in machines[mach]["recordIds"]:
+                machines[mach]["recordIds"].append(rec["id"])
+            if mold_id not in machines[mach]["molds"]:
+                machines[mach]["molds"].append(mold_id)
+            if rec["product"] and rec["product"] not in machines[mach]["products"]:
+                machines[mach]["products"].append(rec["product"])
 
     for bucket in molds.values():
         bucket["searchText"] = " ".join(
@@ -446,123 +410,106 @@ def build_indexes(records, jobs):
                 *bucket["rawForms"],
                 *bucket["products"],
                 *bucket["variants"],
-                *bucket["extraIdsSeen"],
                 *[m["machine"] for m in bucket["machines"]],
             ]
         ).upper()
-        named = [p for p in bucket["products"] if p not in ("试模", "试产")]
-        trial = [p for p in bucket["products"] if p in ("试模", "试产")]
-        bucket["isTrialOnly"] = bool(trial) and not named
-        bucket["hasTrialAndNamed"] = bool(trial) and bool(named)
-        distinct_named = set(named)
-        # collapse trivial whitespace/punctuation differences later in UI; here keep raw
-        bucket["conflictingProducts"] = len(distinct_named) > 1
+        bucket["machines"].sort(key=lambda x: x["machine"])
 
-    return (
-        [molds[k] for k in sorted(molds.keys())],
-        [machines[k] for k in sorted(machines.keys(), key=lambda x: (x[0], int(x[1:] or 0) if x[1:].isdigit() else x))],
-        jobs,
-    )
+    mold_list = [molds[k] for k in sorted(molds.keys())]
+    machine_list = [
+        machines[k]
+        for k in sorted(
+            machines.keys(),
+            key=lambda x: (x[0], int(x[1:]) if x[1:].isdigit() else x),
+        )
+    ]
+    return mold_list, machine_list, jobs
 
 
 QUESTIONS = [
     {
         "id": "Q1",
-        "severity": "rule",
-        "title": "「上 / 下」是否就是上机 / 下机？",
-        "assumption": "D 列勾选 = 上模（把模具装到机台上），E 列勾选 = 下模（把模具从机台拆下来）。证据：绝大多数成对记录是「下旧模 → 上新模」，时间段首尾相接，例如 C20 14:01-14:17 下 S240131，14:17-14:35 上 S260080。",
-        "need": "请确认这个理解是否 100% 正确。如果「上/下」其实是前模/后模（定模/动模）而不是装卸动作，后面整套关系都要重做。",
+        "status": "confirmed",
+        "title": "上 / 下 的含义",
+        "answer": "对。上 = 上机，下 = 下机。",
     },
     {
         "id": "Q2",
-        "severity": "rule",
-        "title": "机台单元格空白，是否一律继承上一行机台？",
-        "assumption": "同一班次内，机台列空白的行属于上一行已填写的机台。14 天里 140/350 行是这样写的，且时间连续。",
-        "need": "请确认。有一处特别容易理解偏差：9月12日 B班，A09 下 S250165（0:30-0:43），下一行 A10 下 C0151-153（0:50-1:01），再下一行空白机台、上 S250165（1:01-1:16）。按「继承上一行」规则，S250165 是从 A09 拆下后装到 A10。如果空白行其实应跟品名相同的 A09，关系就反了。",
+        "status": "confirmed",
+        "title": "空白机台是否继承上一行",
+        "answer": "对。同一班次内，机台格空白的行属于上一行机台。",
     },
     {
         "id": "Q3",
-        "severity": "rule",
-        "title": "编号里的「前模 / 后模」是什么意思？",
-        "assumption": "同一模具编号的前模、后模是同一产品的两套（或两副）模具，不是一副模的定模/动模两半。证据：Charge6箱体 的 S240122 前/后 都在 D19 上，S240261 前/后 都在 D22 上；品名相同，只是前/后标注不同。",
-        "need": "请确认。查询时我目前把 S240122、S240122后、前模S240122 归到同一个编号 S240122，同时保留「前模/后模」标签。如果前模和后模必须当成两套完全独立的模具，我改成分开索引。",
+        "status": "confirmed",
+        "title": "前模 / 后模",
+        "answer": "一套模分成前模、后模，合起来才是完整模具。上机后若后模异常，只下后模保养或维修，好了再上。查询按主编号，前/后只表示这次动的是哪一半。",
     },
     {
         "id": "Q4",
-        "severity": "scope",
-        "title": "这份表只能证明「曾经装过」，不能证明「只能装这些机台」。",
-        "assumption": "9月1–14日转模记录 = 历史装机事实。模具没出现在某台机器上，不代表不能装。",
-        "need": "后续「用模具找适配机台」如果要做成生产排程依据，还需要锁模力/模具尺寸/牙板规格。请确认目前是否先用历史装机作为适配清单，还是必须等规格表。",
+        "status": "confirmed",
+        "title": "历史装机是否可查",
+        "answer": "可以。目前用这 14 天实际出现过的机台作为查询结果。",
     },
     {
         "id": "Q5",
-        "severity": "scope",
-        "title": "机台字母 A/B/C/D/E 是否代表不同吨位或车间？",
-        "assumption": "编号形态是字母+两位数字，共 62 台：A10 台、B8 台、C26 台、D16 台、E4 台。同一模具多数只在同一字母段出现，例如 Charge6箱体 S240122 只在 D19，S240261 只在 D22。",
-        "need": "如果 C 组是同一吨位，历史只上过 C04 的模具，是否也应提示「C 组其他机台可能也可装」？还是必须严格按出现过的机台号？",
+        "status": "confirmed",
+        "title": "字母段是否要联想同组机台",
+        "answer": "不是。A/B/C/D/E 只是机台编号分组。只给实际出现过的机台号，不做同组联想。",
     },
     {
         "id": "Q6",
-        "severity": "data",
-        "title": "S250188 同一晚写了两个完全不同的产品。",
-        "assumption": "9月10日 B班：B09 上 S250188「PB120转接板防火罩」（0:55-1:16）；同时 D03 上 S250188「LOG Lanky左右上盖」（1:30-2:10）。次日 D03 继续按 LOG Lanky 装卸 S250188。",
-        "need": "请确认哪一条写错了。B09 那条很像把模具号抄成了 S250188（同晚 D03 的模号）。在纠正前，我不会把 B09 当成 S250188 的可靠适配机台。",
+        "status": "confirmed",
+        "title": "S250188 出现在 B09 和 D03",
+        "answer": "没有问题。9月10日 B09：下 S260009、上 S250188；D03：下 S250162、上 S250188。品名不同不影响。S250188 同时关联 B09 和 D03。",
     },
     {
         "id": "Q7",
-        "severity": "data",
-        "title": "9月13日 C05 上「Meridian支架」没有模具编号。",
-        "assumption": "次日 9月14日 C05 下模 ZDX3464，品名仍是 Meridian支架。推断 9月13日缺号的那一刀就是 ZDX3464。",
-        "need": "请确认是否可以这样补号。未确认前这条记录不会并进 ZDX3464 的适配清单。",
+        "status": "confirmed",
+        "title": "Meridian支架缺号",
+        "answer": "模具编号就是 ZDX3464，9月13日 C05 那条按同一副模补号。",
     },
     {
         "id": "Q8",
-        "severity": "data",
-        "title": "疑似写错的模具编号（未自动合并）。",
-        "assumption": "S25004≈S250004；S2600091≈S260091；SS230295≈S230295；250187≈S250187；240110≈S240110；s240130≈S240130。S26008 和 250185B 无法单靠上下文钉死。",
-        "need": "请逐条确认。特别是 S26008（C09 / Remo触屏支架）不要和 S260080、S250137 混在一起。",
+        "status": "confirmed",
+        "title": "Remo触屏支架编号",
+        "answer": "Remo触屏支架模具编号是 S250137。表里写成 S26008 的那条已改归 S250137。",
     },
     {
         "id": "Q9",
-        "severity": "data",
-        "title": "一个单元格里写了两个模具号。",
-        "assumption": "9月11日 D17 上模写 S240037/S240151；C27 上模写 ZDX3308/C0151-149M1/M2。可能是两套模一起上，也可能是一个模有厂内号和外协号。",
-        "need": "请说明应把它当成 1 套模还是 2 套模。M2 是否就是 C0151-149M2？",
+        "status": "confirmed",
+        "title": "一格多个模号",
+        "answer": "模号不同就是两套模，都关联到该机台。M2 即 C0151-149M2。",
     },
     {
         "id": "Q10",
-        "severity": "data",
-        "title": "ZDX3312 在同一机台 C25 上写过两个品名。",
-        "assumption": "9月2日 C25 下 ZDX3312「MOJO后壳」；9月14日 C25 上 ZDX3312「Optical左右后壳」。可能是同一副模做不同项目，也可能是品名写错。",
-        "need": "请确认是不是同一副模。",
+        "status": "confirmed",
+        "title": "ZDX3312 两个品名",
+        "answer": "同模不同镶件，记录都是同一套模。",
     },
     {
         "id": "Q11",
-        "severity": "data",
-        "title": "S240217 的品名从 EX1H 变成了 T68。",
-        "assumption": "D17 上 S240217 前三天都叫「EX1H后门低音-盆架组」，9月11日 B班下这副模时写成了「T68 盆架组」，随后上 S240037/S240151。更像是当班把下模品名跟着新模写成了 T68。",
-        "need": "请确认 S240217 是否始终是 EX1H，而不是 T68。",
+        "status": "confirmed",
+        "title": "S240217 的品名",
+        "answer": "是 EX1H。品名只作备注，关联仍按模具号。",
     },
     {
         "id": "Q12",
-        "severity": "data",
-        "title": "两行没有勾选「上」或「下」。",
-        "assumption": "9月2日 A09 WY01按键 S260024（16:31-16:51）无勾选；9月10日 B02 在下了 S250144 右箱后，下一行 S250143 左箱无勾选，时间 18:55-19:30，很像是上模漏勾。",
-        "need": "请补类别。未补之前这两条仍挂在对应机台上，但标记为类别缺失。",
+        "status": "confirmed",
+        "title": "未勾选上/下",
+        "answer": "上下勾选非必要。必要的是机台编号和模具号是否关联。",
     },
     {
         "id": "Q13",
-        "severity": "data",
-        "title": "「试模」是状态，不是品名。",
-        "assumption": "试模行仍有真实模具编号。例如 S260080 白天在 C20 写作试模，夜班同一机台下模时写成 T68前壳组件。S260063、S260024、S260074、S250189 也是先试模后出现正式品名。",
-        "need": "查询时我按模具编号归并，品名里同时保留「试模」和后来的正式名。这样可以吗？",
+        "status": "confirmed",
+        "title": "试模 / 机种名",
+        "answer": "机种名非关键信息。只要机台编号和模具号关联即可。",
     },
     {
         "id": "Q14",
-        "severity": "data",
-        "title": "S240127AB 的 AB 是什么？",
-        "assumption": "只出现一次：9月12日 C28 上 Charge6导光件。可能是 A+B 穴、AB 件，或前模+后模一起写。",
-        "need": "请说明 AB 是否要拆成两套编号。",
+        "status": "confirmed",
+        "title": "S240127AB",
+        "answer": "不用拆。记同一主编号 S240127。",
     },
 ]
 
@@ -572,11 +519,6 @@ def main():
     jobs = attach_jobs(records)
     molds, machines, jobs = build_indexes(records, jobs)
 
-    flagged_records = [r["id"] for r in records if any(
-        i not in ("has_front_or_rear_set", "machine_inherited_from_previous_row")
-        for i in r["issues"]
-    )]
-
     dataset = {
         "meta": {
             "sourceFile": "转模记录9月份.xlsx",
@@ -584,18 +526,19 @@ def main():
             "sheets": [f"9.{i}" for i in range(1, 15)],
             "recordCount": len(records),
             "jobCount": len(jobs),
-            "moldCount": len([m for m in molds if m["canonical"] != "MISSING"]),
+            "moldCount": len(molds),
             "machineCount": len(machines),
-            "generatedNote": "关系来自转模历史，不是模具规格书。编号疑点未自动合并。",
+            "generatedNote": "只记录表里实际出现过的 模具号↔机台号。不做同组机台联想。",
         },
         "parsingRules": [
-            "每个工作表是一天，表内分 A班 / B班两段。",
-            "列：机台、机种品名、模具编号、类别上/下、开单时间、转料时间、转模完成时间、签板时间、备注。",
-            "机台列有值：开始一台新的转模作业。",
-            "机台列空白：继承本班次上一行机台（待 Q2 确认）。",
-            "类别「上」= 上机，「下」= 下机（待 Q1 确认）。",
-            "模具号去掉「前模/后模/前/后」前缀后缀后得到主编号，前/后作为套别标签保留（待 Q3 确认）。",
-            "疑似笔误只打标，不改号。",
+            "每个工作表是一天，表内分 A班 / B班。",
+            "查询只认机台编号和模具编号的关联；机种品名只作备注。",
+            "机台列有值：该行机台。机台列空白：继承本班次上一行机台。",
+            "上 = 上机，下 = 下机。没有勾选也不影响关联。",
+            "前模/后模是同一套模的两半。主编号相同即同一套模；下后模再上是半边维修。",
+            "一格里多个不同模号 = 多套模，都关联到这一台。M2 展开为 C0151-149M2。",
+            "S240127AB 记作 S240127。S26008 按确认改为 S250137。Meridian支架缺号补 ZDX3464。",
+            "只列出实际出现过的机台，不按字母组联想其他机台。",
         ],
         "questions": QUESTIONS,
         "stats": {
@@ -604,18 +547,22 @@ def main():
             "missingAction": sum(1 for r in records if not r["action"]),
             "inheritedMachineRows": sum(1 for r in records if r["inheritedMachine"]),
             "moldsOnMultipleMachines": sum(1 for m in molds if len(m["machines"]) > 1),
-            "flaggedRecordCount": len(flagged_records),
+            "correctedRows": sum(1 for r in records if r["mold"].get("correction")),
         },
         "records": records,
         "jobs": jobs,
         "molds": molds,
         "machines": machines,
-        "flaggedRecordIds": flagged_records,
     }
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"wrote {OUT} records={len(records)} molds={len(molds)} machines={len(machines)} jobs={len(jobs)}")
+    print(
+        f"wrote {OUT} records={len(records)} molds={len(molds)} "
+        f"machines={len(machines)} jobs={len(jobs)} "
+        f"multi={dataset['stats']['moldsOnMultipleMachines']} "
+        f"corrected={dataset['stats']['correctedRows']}"
+    )
 
 
 if __name__ == "__main__":

@@ -13,14 +13,10 @@ export function moldMatches(mold: MoldIndex, query: string) {
   const q = query.trim();
   if (!q) return true;
   const n = normalizeQuery(q);
+  if (!n) return true;
+  if (mold.canonical.includes(n)) return true;
   const hay = mold.searchText.replace(/\s+/g, "").toUpperCase();
-  if (hay.includes(n) || hay.includes(q.toUpperCase().replace(/\s+/g, ""))) {
-    return true;
-  }
-  if (mold.canonical !== "MISSING" && n && mold.canonical.includes(n)) {
-    return true;
-  }
-  return mold.products.some((p) => p.toUpperCase().includes(q.toUpperCase()));
+  return hay.includes(n);
 }
 
 export function machineMatches(machine: MachineIndex, query: string) {
@@ -28,35 +24,16 @@ export function machineMatches(machine: MachineIndex, query: string) {
   if (!q) return true;
   const n = normalizeQuery(q);
   if (machine.id.includes(n)) return true;
-  if (machine.series === n) return true;
-  return (
-    machine.molds.some((m) => m.includes(n)) ||
-    machine.products.some((p) => p.toUpperCase().includes(q.toUpperCase()))
-  );
+  return machine.molds.some((m) => m.includes(n));
 }
 
 export function recordsForMold(dataset: Dataset, canonical: string): RecordRow[] {
-  return dataset.records.filter(
-    (r) => (r.mold.canonical || "MISSING") === canonical
-  );
+  return dataset.records.filter((r) => r.mold.ids.includes(canonical));
 }
 
-export function recordsForMachine(dataset: Dataset, machineId: string): RecordRow[] {
+export function recordsForMachine(
+  dataset: Dataset,
+  machineId: string
+): RecordRow[] {
   return dataset.records.filter((r) => r.machine === machineId);
-}
-
-export function reliableMachines(mold: MoldIndex) {
-  return mold.machines.filter(
-    (m) => m.confidence === "high" || m.confidence === "inherited"
-  );
-}
-
-export function flaggedMachines(mold: MoldIndex) {
-  return mold.machines.filter(
-    (m) => m.confidence !== "high" && m.confidence !== "inherited"
-  );
-}
-
-export function jobForRecord(dataset: Dataset, jobId: string) {
-  return dataset.jobs.find((j) => j.id === jobId);
 }

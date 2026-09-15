@@ -1,21 +1,13 @@
-export type Confidence =
-  | "high"
-  | "inherited"
-  | "action_missing"
-  | "mold_missing"
-  | "conflict";
+export type MachineSource = "written" | "inherited";
 
 export type MoldIdentity = {
   raw: string | null;
   canonical: string | null;
   variant: "前模" | "后模" | null;
-  ab: string | null;
-  extraIds: string[];
+  ids: string[];
   display: string;
-  suspectedTypo?: {
-    guess: string | null;
-    reason: string;
-  } | null;
+  correctedFrom: string | null;
+  correction: string | null;
 };
 
 export type RecordRow = {
@@ -35,7 +27,6 @@ export type RecordRow = {
   changeTime: string | null;
   signTime: string | null;
   note: string | null;
-  issues: string[];
   jobId: string;
 };
 
@@ -57,8 +48,7 @@ export type MachineEdge = {
   variants: string[];
   products: string[];
   dates: string[];
-  confidence: Confidence;
-  issues: string[];
+  source: MachineSource;
 };
 
 export type MoldIndex = {
@@ -69,18 +59,12 @@ export type MoldIndex = {
   products: string[];
   machines: MachineEdge[];
   recordIds: string[];
-  issues: string[];
-  suspectedTypo: { guess: string | null; reason: string } | null;
-  extraIdsSeen: string[];
+  corrections: string[];
   searchText: string;
-  isTrialOnly: boolean;
-  hasTrialAndNamed: boolean;
-  conflictingProducts: boolean;
 };
 
 export type MachineIndex = {
   id: string;
-  series: string;
   molds: string[];
   recordIds: string[];
   products: string[];
@@ -88,10 +72,9 @@ export type MachineIndex = {
 
 export type Question = {
   id: string;
-  severity: "rule" | "scope" | "data";
+  status: "confirmed" | "open";
   title: string;
-  assumption: string;
-  need: string;
+  answer: string;
 };
 
 export type Dataset = {
@@ -113,11 +96,10 @@ export type Dataset = {
     missingAction: number;
     inheritedMachineRows: number;
     moldsOnMultipleMachines: number;
-    flaggedRecordCount: number;
+    correctedRows: number;
   };
   records: RecordRow[];
   jobs: Job[];
   molds: MoldIndex[];
   machines: MachineIndex[];
-  flaggedRecordIds: string[];
 };
