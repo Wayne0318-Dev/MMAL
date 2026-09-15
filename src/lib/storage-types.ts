@@ -1,6 +1,12 @@
 import type { Dataset } from "@/lib/types";
 
-export type StorageMode = "cloud" | "local";
+export type StorageMode = "cloud" | "server" | "local";
+
+export function storageHeadline(mode: StorageMode | undefined) {
+  if (mode === "cloud") return "数据在云端";
+  if (mode === "server") return "数据在服务器";
+  return "数据在本机";
+}
 
 export type StorageInfo = {
   mode: StorageMode;

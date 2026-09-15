@@ -99,7 +99,7 @@ export type Dataset = {
     machineCount: number;
     generatedNote: string;
     storage?: {
-      mode: "cloud" | "local";
+      mode: "cloud" | "server" | "local";
       writeProtected: boolean;
       label: string;
     };

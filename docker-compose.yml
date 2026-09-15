@@ -1,0 +1,19 @@
+services:
+  web:
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    ports:
+      - "43127:43127"
+    environment:
+      HOSTING: vps
+      IMPORT_KEY: ${IMPORT_KEY}
+      PORT: "43127"
+      HOSTNAME: 0.0.0.0
+    volumes:
+      - mold-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  mold-data:

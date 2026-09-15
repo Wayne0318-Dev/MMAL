@@ -17,14 +17,26 @@ import {
 } from "@/lib/store-turso";
 import type { RebuildResult, StorageInfo } from "@/lib/storage-types";
 import { emptyDataset } from "@/lib/build-dataset";
+import { isPersistentServer } from "@/lib/hosting";
 import type { Dataset } from "@/lib/types";
 
 export function storageInfo(): StorageInfo {
+  const writeProtected =
+    Boolean(process.env.IMPORT_KEY) ||
+    Boolean(process.env.VERCEL) ||
+    isPersistentServer();
   if (tursoConfigured()) {
     return {
       mode: "cloud",
-      writeProtected: Boolean(process.env.IMPORT_KEY) || Boolean(process.env.VERCEL),
+      writeProtected,
       label: "云端数据库（关电脑也能查，导入不会丢）",
+    };
+  }
+  if (isPersistentServer()) {
+    return {
+      mode: "server",
+      writeProtected,
+      label: "写在这台一直开着的服务器硬盘上。车间电脑关机也能查，不经过 GitHub。",
     };
   }
   return {

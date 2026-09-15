@@ -18,13 +18,13 @@ npm run dev
 
 未配置云数据库时，数据写在 `data/*.xlsx` 和 `src/data/dataset.json`。关电脑不影响本机已保存的文件，但别人打不开；在文件夹里删掉表格后，下一次重建查询会少那一份。
 
-## 关电脑也能查、导入也不丢（免费）
+## 关电脑也能查、导入也不丢
 
-把网站放到 [Vercel](https://vercel.com)，表格放到 [Turso](https://turso.tech)，都用免费档。完成后用 `https://……vercel.app` 访问。
+**中国大陆车间优先看 [DEPLOY.md](./DEPLOY.md) 方案 B**：一台香港/国内轻量服务器 + Docker，不经过 GitHub。GitHub、Vercel、Turso 从大陆经常超时，查询网站也会打不开。
 
-**点哪里、填什么：见 [DEPLOY.md](./DEPLOY.md)。** 顺序是：Create repo → 建 Turso 库 → Vercel 导入并填三个环境变量 → 打开网址确认「数据在云端」。
+若 GitHub 能偶尔连上，也可以走免费的方案 A（Vercel + Turso）。Create repo 请在 Cursor 里点，不要用车间电脑打开 github.com。
 
-第一次打开会把仓库里的 8 月、9 月表写入云库。之后在「导入新表」上传新月份。查询不用口令；导入和删除要填你设的 `IMPORT_KEY`。
+查询不用口令；导入和删除要填 `IMPORT_KEY`。
 
 ## 数据规则
 

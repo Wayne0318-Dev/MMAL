@@ -323,7 +323,9 @@ export function LookupApp({ initialDataset }: { initialDataset: Dataset }) {
           。
           {dataset.meta.storage?.mode === "cloud"
             ? "数据在云端，关电脑也能查，导入不会丢。"
-            : "当前写在本机。要关电脑也能用，请按说明接上免费云库并部署。"}
+            : dataset.meta.storage?.mode === "server"
+              ? "数据写在这台一直开着的服务器上，车间电脑关机也能查。"
+              : "当前写在本机。要关电脑也能用，请按说明部署到云端或一台一直开机的服务器。"}
         </p>
       </header>
 

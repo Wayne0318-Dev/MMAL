@@ -1,5 +1,11 @@
+import { isPersistentServer } from "@/lib/hosting";
+
 export function writeKeyRequired() {
-  return Boolean(process.env.IMPORT_KEY) || Boolean(process.env.VERCEL);
+  return (
+    Boolean(process.env.IMPORT_KEY) ||
+    Boolean(process.env.VERCEL) ||
+    isPersistentServer()
+  );
 }
 
 export function assertWriteAccess(request: Request, form?: FormData) {

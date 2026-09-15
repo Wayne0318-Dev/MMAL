@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+npm-debug.log*
+
+# build
+.next
+out
+build
+coverage
+
+# git / secrets
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+!.env.vps.example
+
+# misc
+*.md
+!README.md
+.cursor
+.vscode
+.DS_Store
+uploads

@@ -2,16 +2,21 @@ import { promises as fs } from "fs";
 import path from "path";
 import { buildDataset, emptyDataset } from "@/lib/build-dataset";
 import { parseWorkbookBuffer } from "@/lib/parse-workbook";
+import { isPersistentServer } from "@/lib/hosting";
 import type { RebuildResult, WorkbookFile } from "@/lib/storage-types";
 import { safeXlsxName } from "@/lib/storage-types";
 import type { Dataset } from "@/lib/types";
 
+const DATA_DIR = path.join(process.cwd(), "data");
+const LOCAL_SNAPSHOT = path.join(process.cwd(), "src/data/dataset.json");
+const SERVER_SNAPSHOT = path.join(process.cwd(), "data", "dataset.json");
+
 export function dataDir() {
-  return path.join(process.cwd(), "data");
+  return DATA_DIR;
 }
 
 export function datasetPath() {
-  return path.join(process.cwd(), "src/data/dataset.json");
+  return isPersistentServer() ? SERVER_SNAPSHOT : LOCAL_SNAPSHOT;
 }
 
 export async function listLocalXlsx(): Promise<string[]> {

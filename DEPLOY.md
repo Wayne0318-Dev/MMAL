@@ -1,6 +1,64 @@
 # 上线操作步骤（关电脑也能查）
 
-目标：得到一个 `https://……vercel.app` 网址。车间电脑关机、换手机、换电脑都能打开查询。新月份表格从网站导入后保存在云库，不会丢。
+目标：车间电脑关机、换手机、换电脑都能打开查询；新月份表格导入后不会丢。
+
+有两条路：
+
+- **方案 A（免费）**：GitHub + Turso + Vercel，得到 `https://……vercel.app`
+- **方案 B（推荐给中国大陆车间）**：一台一直开机的香港/国内轻量服务器 + Docker。**不经过 GitHub。** 从大陆打开 GitHub、Vercel、Turso 经常失败时走这条。
+
+---
+
+## 中国大陆：GitHub 经常失败怎么办
+
+GitHub 在大陆会超时、克隆失败、登录转圈，这是网络问题，不是这个项目坏了。
+
+**车间日常查询根本不需要打开 GitHub。** GitHub 只在方案 A 第一次把代码交给 Vercel 时用一次。
+
+可以改善、且不要做的事：
+
+1. **Create repo 在 Cursor 里点**，不要用车间电脑打开 github.com 建仓库。Cursor 云端不在大陆，成功率高得多。
+2. **绑定 Vercel 选一次网络较好的时段做完**（有时晚上、有时手机热点和公司宽带不一样）。绑定成功后，车间只收藏查询网址，不再进 GitHub。
+3. **不要**把账号密码填进第三方「GitHub 加速站 / 镜像登录」。代码下载镜像也尽量别用来推送，口令会落到别人服务器上。
+4. 代码想在国内留一份备份，可以用 [Gitee](https://gitee.com) 另存。Gitee **不能**替代 Vercel 对 GitHub 的连接，查询网站也不会自动从 Gitee 更新。
+5. 若 `github.com`、`vercel.com`、`vercel.app`、`turso.tech` 经常打不开：直接走 **方案 B**。继续卡在 GitHub 上解决不了车间访问。
+
+装 Node 依赖（方案 B 构建时）用国内镜像即可：
+
+```bash
+npm config set registry https://registry.npmmirror.com
+```
+
+---
+
+## 方案 B：香港/国内轻量 + Docker（不经过 GitHub）
+
+需要：一台 **24 小时开机** 的云主机（腾讯云/阿里云轻量，地域选 **香港** 通常从大陆更稳；选国内要自己备案域名的，也可以先用 IP 访问）。上面安装 Docker。把本项目文件夹拷到服务器（U 盘、网盘、能连上时再拉代码都可以）。
+
+1. 在项目目录：
+
+```bash
+cp .env.vps.example .env
+```
+
+2. 用记事本打开 `.env`，把 `IMPORT_KEY=` 改成你们自己的导入口令。
+3. 启动：
+
+```bash
+docker compose up -d --build
+```
+
+国内构建慢或 npm 失败时，`.env` 里已有 `NPM_REGISTRY=https://registry.npmmirror.com`。
+4. 浏览器打开 `http://服务器公网IP:43127`
+5. 点 **导入新表**，应显示 **数据在服务器**。8 月、9 月表会在第一次启动时写入数据盘。之后导入十月、十一月，文件留在服务器硬盘，不依赖车间电脑，也不依赖 GitHub。
+
+安全：这台机器请设防火墙，只放行 `43127`（或前面再挂 Nginx + 密码）。导入口令不要用默认的「请改成自己的导入口令」。
+
+更新程序：把新代码覆盖到同一目录后再次 `docker compose up -d --build`。数据在 Docker 卷 `mold-data` 里，重建镜像不会清表格。
+
+---
+
+## 方案 A：Vercel + Turso（免费，需 GitHub 能连一次）
 
 需要三个免费账号，都建议用 **同一个 GitHub 账号** 登录：
 
@@ -149,6 +207,7 @@ turso db tokens create mold-machine
 
 ## 常见卡住的地方
 
+- **GitHub / Vercel 网页打不开**：中国大陆常见情况。车间查询不要依赖 GitHub；改走本文开头的 **方案 B**。
 - **Vercel 列表里没有仓库**：第 1 步没建 GitHub 仓库，或授权时没勾这个仓库。到 Vercel → Settings → Git 重新授权。
 - **构建成功但导入报错 / 仍显示本机**：环境变量没填、填错名、或填完没 Redeploy。
 - **导入口令不对**：网站上填的必须和 Vercel 里 `IMPORT_KEY` 完全一致。

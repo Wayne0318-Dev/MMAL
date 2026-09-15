@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { FileUp, Trash2 } from "lucide-react";
 import type { Dataset } from "@/lib/types";
-import type { StorageInfo } from "@/lib/storage-types";
+import {
+  storageHeadline,
+  type StorageInfo,
+} from "@/lib/storage-types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -77,7 +80,11 @@ export function ImportPanel({
 
   async function remove(filename: string) {
     const where =
-      storage?.mode === "cloud" ? "会从云端汇总里去掉这份表。" : "本机这份表文件也会删除。";
+      storage?.mode === "cloud"
+        ? "会从云端汇总里去掉这份表。"
+        : storage?.mode === "server"
+          ? "会从这台服务器硬盘上的表格里去掉。"
+          : "本机这份表文件也会删除。";
     if (!confirm(`去掉「${filename}」？${where}`)) return;
     setBusy(true);
     setError(null);
@@ -109,7 +116,7 @@ export function ImportPanel({
     <div className="space-y-4">
       <Alert>
         <AlertTitle>
-          {storage?.mode === "cloud" ? "数据在云端" : "数据在本机"}
+          {storageHeadline(storage?.mode)}
         </AlertTitle>
         <AlertDescription>
           {storage?.label ||
