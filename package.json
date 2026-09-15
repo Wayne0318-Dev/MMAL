@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --port 43127 --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start --port 43127 --hostname 127.0.0.1",
+    "start": "next start --port 43127 --hostname 0.0.0.0",
     "lint": "eslint",
     "data": "npx tsx scripts/rebuild-dataset.ts"
   },
